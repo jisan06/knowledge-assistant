@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+backend/.venv/
+venv/
+
+# Databases & local persistent data
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+backend/data/
+data/
+
+# Secrets
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Next.js
+node_modules/
+.next/
+out/
+
+# Environment and editor
+.vercel/
+.vscode/
+.idea/
