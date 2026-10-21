@@ -1,9 +1,18 @@
+import os
+import sys
+
+# Ensure backend root is always on sys.path regardless of execution CWD
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db.session import Base, engine
 from app.routes.conversations import router as conversations_router
+from app.routes.documents import router as documents_router
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.ai_service import AIService
 
@@ -25,8 +34,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount new conversation history router
+# Mount routers
 app.include_router(conversations_router)
+app.include_router(documents_router)
 
 ai_service = AIService()
 
