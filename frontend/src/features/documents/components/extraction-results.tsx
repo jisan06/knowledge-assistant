@@ -14,7 +14,7 @@ interface ExtractionResultsProps {
  * Displays the full extraction report: summary banner followed by per-page results.
  */
 export function ExtractionResults({ result, onReset }: ExtractionResultsProps) {
-  const { filename, total_pages, total_characters, has_extractable_text, message, pages } = result;
+  const { filename, total_pages, total_characters, has_extractable_text, message, pages, total_chunks } = result;
 
   return (
     <div className="space-y-5 animate-fadeIn">
@@ -68,7 +68,12 @@ export function ExtractionResults({ result, onReset }: ExtractionResultsProps) {
           <div className="flex flex-wrap gap-2">
             <StatChip label="Pages" value={String(total_pages)} />
             {has_extractable_text && (
-              <StatChip label="Characters" value={total_characters.toLocaleString()} />
+              <>
+                <StatChip label="Characters" value={total_characters.toLocaleString()} />
+                {total_chunks !== undefined && (
+                  <StatChip label="Chunks" value={String(total_chunks)} />
+                )}
+              </>
             )}
           </div>
         </div>

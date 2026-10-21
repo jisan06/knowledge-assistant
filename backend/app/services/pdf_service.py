@@ -7,6 +7,7 @@ from pypdf.errors import PdfReadError, PyPdfError
 
 from app.config import settings
 from app.schemas.document import DocumentPage, DocumentUploadResponse
+from app.services.chunking_service import ChunkingService
 
 
 class PDFServiceError(Exception):
@@ -140,10 +141,17 @@ class PDFService:
 
         has_extractable_text = total_characters > 0
 
+        # Generate page-isolated text chunks
+        chunks = ChunkingService.chunk_document_pages(
+            pages=pages,
+            filename=safe_filename,
+        )
+        total_chunks = len(chunks)
+
         if has_extractable_text:
             message = (
                 f"Successfully extracted text from {total_pages} page(s) "
-                f"({total_characters} characters)."
+                f"({total_characters} characters, {total_chunks} chunks)."
             )
         else:
             message = (
@@ -157,5 +165,7 @@ class PDFService:
             total_characters=total_characters,
             has_extractable_text=has_extractable_text,
             pages=pages,
+            total_chunks=total_chunks,
+            chunks=chunks,
             message=message,
         )

@@ -32,7 +32,13 @@ export function PageResult({ page, isFirst }: PageResultProps) {
           </span>
         </div>
         <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-          {hasText ? `${page.char_count.toLocaleString()} chars` : 'No text'}
+          {hasText
+            ? `${page.char_count.toLocaleString()} chars${
+                page.chunk_count !== undefined
+                  ? ` · ${page.chunk_count} ${page.chunk_count === 1 ? 'chunk' : 'chunks'}`
+                  : ''
+              }`
+            : 'No text'}
         </span>
       </div>
 

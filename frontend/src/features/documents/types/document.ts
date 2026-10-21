@@ -2,11 +2,25 @@
  * Document Feature Type Definitions
  */
 
+/** One extracted text chunk from a page. */
+export interface DocumentChunk {
+  chunk_id: string;
+  filename: string;
+  page_number: number;
+  chunk_index: number;
+  text: string;
+  char_count: number;
+  start_char: number;
+  end_char: number;
+}
+
 /** One extracted page from the PDF, 1-based page numbering. */
 export interface DocumentPage {
   page_number: number;
   text: string;
   char_count: number;
+  chunk_count?: number;
+  chunks?: DocumentChunk[];
 }
 
 /** Successful response from POST /api/documents/upload */
@@ -16,6 +30,8 @@ export interface DocumentUploadResponse {
   total_characters: number;
   has_extractable_text: boolean;
   pages: DocumentPage[];
+  total_chunks?: number;
+  chunks?: DocumentChunk[];
   message: string;
 }
 

@@ -79,11 +79,18 @@ def test_upload_valid_text_pdf():
     assert data["has_extractable_text"] is True
     assert data["total_characters"] > 0
     assert len(data["pages"]) == 1
+    assert data["total_chunks"] == 1
+    assert len(data["chunks"]) == 1
+    assert data["chunks"][0]["chunk_id"] == "sample_pdf_p1_c1"
+    assert data["chunks"][0]["page_number"] == 1
+    assert data["chunks"][0]["filename"] == "sample.pdf"
 
     page = data["pages"][0]
     assert page["page_number"] == 1
     assert "Knowledge Assistant Stage 1" in page["text"]
     assert page["char_count"] > 0
+    assert page["chunk_count"] == 1
+    assert len(page["chunks"]) == 1
 
 
 def test_upload_blank_or_image_pdf():
@@ -132,3 +139,62 @@ def test_upload_corrupt_pdf():
     )
     assert response.status_code == 422
     assert "corrupted" in response.json()["detail"].lower() or "unable to parse" in response.json()["detail"].lower()
+
+
+# --- Endpoint Tests: POST /api/documents/chunk-preview ---
+
+def test_chunk_preview_endpoint_short_text():
+    response = client.post(
+        "/api/documents/chunk-preview",
+        json={
+            "text": "Short sample text that should easily fit into one chunk.",
+            "filename": "sample.pdf",
+            "page_number": 1,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["filename"] == "sample.pdf"
+    assert data["page_number"] == 1
+    assert data["total_chunks"] == 1
+    assert len(data["chunks"]) == 1
+    assert data["chunks"][0]["chunk_id"] == "sample_pdf_p1_c1"
+    assert data["chunks"][0]["char_count"] > 0
+
+
+def test_chunk_preview_endpoint_long_text():
+    # ~2400 characters of text
+    long_text = "This is a comprehensive paragraph about artificial intelligence systems. " * 30
+    response = client.post(
+        "/api/documents/chunk-preview",
+        json={
+            "text": long_text,
+            "filename": "guide.pdf",
+            "page_number": 3,
+            "chunk_size": 800,
+            "chunk_overlap": 150,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_chunks"] >= 3
+    assert len(data["chunks"]) >= 3
+    for chunk in data["chunks"]:
+        assert chunk["filename"] == "guide.pdf"
+        assert chunk["page_number"] == 3
+        assert chunk["char_count"] > 0
+
+
+def test_chunk_preview_endpoint_empty_text():
+    response = client.post(
+        "/api/documents/chunk-preview",
+        json={
+            "text": "   \n\t  ",
+            "filename": "blank.pdf",
+            "page_number": 1,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_chunks"] == 0
+    assert data["chunks"] == []

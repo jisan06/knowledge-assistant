@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
     MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB default
+    CHUNK_SIZE: int = 800  # Default target chunk size in characters
+    CHUNK_OVERLAP: int = 150  # Default overlap between consecutive page chunks
 
     model_config = SettingsConfigDict(
         env_file=(str(ENV_FILE_PATH), ".env"),

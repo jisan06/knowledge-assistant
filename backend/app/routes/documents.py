@@ -2,7 +2,12 @@ import logging
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.config import settings
-from app.schemas.document import DocumentUploadResponse
+from app.schemas.document import (
+    DocumentUploadResponse,
+    ChunkPreviewRequest,
+    ChunkPreviewResponse,
+)
+from app.services.chunking_service import ChunkingService
 from app.services.pdf_service import (
     PDFService,
     PDFServiceError,
@@ -83,3 +88,30 @@ async def upload_document(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while processing the PDF file. Please try again.",
         )
+
+
+@router.post(
+    "/chunk-preview",
+    response_model=ChunkPreviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Preview text chunking for arbitrary text without uploading a PDF",
+)
+def preview_chunks(payload: ChunkPreviewRequest):
+    """
+    Splits arbitrary text into chunks of ~800 chars with ~150 chars overlap.
+    Useful for inspecting chunking behavior on short, long, or empty text.
+    """
+    chunks = ChunkingService.chunk_page(
+        text=payload.text,
+        filename=payload.filename,
+        page_number=payload.page_number,
+        chunk_size=payload.chunk_size,
+        chunk_overlap=payload.chunk_overlap,
+    )
+    return ChunkPreviewResponse(
+        filename=payload.filename,
+        page_number=payload.page_number,
+        total_characters=len(payload.text.strip()) if payload.text else 0,
+        total_chunks=len(chunks),
+        chunks=chunks,
+    )
