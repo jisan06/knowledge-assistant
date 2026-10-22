@@ -11,6 +11,10 @@ class DocumentChunk(BaseModel):
     char_count: int = Field(..., description="Character count of this chunk")
     start_char: int = Field(default=0, description="Start character offset on the source page")
     end_char: int = Field(default=0, description="End character offset on the source page")
+    embedding: Optional[List[float]] = Field(
+        default=None,
+        description="Optional numerical embedding vector for this chunk",
+    )
 
 
 class DocumentPage(BaseModel):
@@ -58,3 +62,49 @@ class ChunkPreviewResponse(BaseModel):
     total_characters: int = Field(..., description="Total characters in input text")
     total_chunks: int = Field(..., description="Total number of chunks generated")
     chunks: List[DocumentChunk] = Field(default_factory=list, description="List of generated chunks")
+
+
+# --- Embedding Request & Response Schemas ---
+
+class ChunkEmbeddingResult(BaseModel):
+    chunk_id: str = Field(..., description="Unique ID matching the source DocumentChunk")
+    filename: str = Field(..., description="Source document filename")
+    page_number: int = Field(..., description="1-based page number")
+    chunk_index: int = Field(..., description="1-based chunk index on the page")
+    text: str = Field(..., description="Chunk text content")
+    vector: List[float] = Field(..., description="Numerical embedding vector")
+    dimension: int = Field(..., description="Length of the embedding vector")
+    model: str = Field(..., description="Name of the embedding model used")
+
+
+class EmbedPreviewRequest(BaseModel):
+    text: str = Field(..., description="Sample text or chunk to embed")
+    filename: str = Field(default="preview.pdf", description="Optional source filename")
+    page_number: int = Field(default=1, description="Optional page number", ge=1)
+
+
+class EmbedPreviewResponse(BaseModel):
+    chunk_id: str = Field(..., description="Stable chunk identifier")
+    filename: str = Field(..., description="Source filename")
+    page_number: int = Field(..., description="1-based page number")
+    model: str = Field(..., description="Name of embedding model")
+    dimension: int = Field(..., description="Vector dimensionality")
+    vector_preview: List[float] = Field(
+        ...,
+        description="First few elements of the vector for inspection (e.g. first 5 floats)",
+    )
+    full_vector_length: int = Field(..., description="Total length of the vector")
+
+
+class EmbedChunksRequest(BaseModel):
+    chunks: List[DocumentChunk] = Field(..., description="List of DocumentChunk items to embed")
+
+
+class EmbedChunksResponse(BaseModel):
+    model: str = Field(..., description="Embedding model name used")
+    dimension: int = Field(..., description="Vector dimensionality")
+    total_chunks: int = Field(..., description="Total number of chunks processed")
+    embeddings: List[ChunkEmbeddingResult] = Field(
+        default_factory=list,
+        description="List of embedded chunk results preserving metadata and vectors",
+    )

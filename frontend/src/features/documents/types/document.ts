@@ -12,6 +12,7 @@ export interface DocumentChunk {
   char_count: number;
   start_char: number;
   end_char: number;
+  embedding?: number[];
 }
 
 /** One extracted page from the PDF, 1-based page numbering. */
