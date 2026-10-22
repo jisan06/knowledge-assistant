@@ -101,42 +101,43 @@ class PDFService:
         stream = io.BytesIO(file_bytes)
         try:
             reader = PdfReader(stream, strict=False)
-        except (PdfReadError, PyPdfError, ValueError, Exception):
+            if reader.is_encrypted:
+                raise EncryptedPDFError("Encrypted or password-protected PDFs are not supported.")
+            total_pages = len(reader.pages)
+            if total_pages == 0:
+                raise InvalidPDFError("The uploaded PDF contains no pages.")
+        except EncryptedPDFError:
+            raise
+        except InvalidPDFError:
+            raise
+        except (PdfReadError, PyPdfError, ValueError, EOFError, KeyError, Exception):
             raise InvalidPDFError(
                 "Unable to parse PDF document. The file may be corrupted or malformed."
             )
 
-        # Check for encryption
-        try:
-            if reader.is_encrypted:
-                raise EncryptedPDFError("Encrypted or password-protected PDFs are not supported.")
-        except EncryptedPDFError:
-            raise
-        except Exception:
-            raise InvalidPDFError("Failed to inspect PDF security attributes.")
-
-        total_pages = len(reader.pages)
-        if total_pages == 0:
-            raise InvalidPDFError("The uploaded PDF contains no pages.")
-
         pages = []
         total_characters = 0
 
-        for page_idx, page in enumerate(reader.pages, start=1):
-            try:
-                page_text = page.extract_text() or ""
-            except Exception:
-                page_text = ""
+        try:
+            for page_idx, page in enumerate(reader.pages, start=1):
+                try:
+                    page_text = page.extract_text() or ""
+                except Exception:
+                    page_text = ""
 
-            char_count = len(page_text.strip())
-            total_characters += char_count
+                char_count = len(page_text.strip())
+                total_characters += char_count
 
-            pages.append(
-                DocumentPage(
-                    page_number=page_idx,
-                    text=page_text,
-                    char_count=char_count,
+                pages.append(
+                    DocumentPage(
+                        page_number=page_idx,
+                        text=page_text,
+                        char_count=char_count,
+                    )
                 )
+        except Exception:
+            raise InvalidPDFError(
+                "Unable to parse PDF document pages. The file may be corrupted or malformed."
             )
 
         has_extractable_text = total_characters > 0

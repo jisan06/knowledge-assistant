@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db.models import UploadedDocument
 from app.db.session import get_db
+from app.providers.gemini import GeminiAPIError
 from app.schemas.document import (
     DocumentUploadResponse,
     DocumentItemResponse,
@@ -33,10 +34,6 @@ from app.services.embedding_service import (
 from app.services.pdf_service import (
     PDFService,
     PDFServiceError,
-    FileTooLargeError,
-    EmptyFileError,
-    InvalidPDFError,
-    EncryptedPDFError,
 )
 from app.services.search_service import SearchService
 from app.services.rag_service import RAGService
@@ -742,11 +739,17 @@ async def ask_documents(payload: AskQuestionRequest):
             answer=answer,
             sources=sources,
         )
-    except Exception as e:
+    except GeminiAPIError as e:
+        logger.warning(f"AI service error during RAG question answering: {e.status_code} - {e.message}")
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.message,
+        )
+    except Exception:
         logger.exception("Error during RAG question answering")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to answer question using RAG: {str(e)}",
+            detail="Failed to answer question using RAG. Please try again.",
         )
 
 

@@ -1,4 +1,4 @@
-import io
+import asyncio
 import json
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +6,13 @@ from fastapi.testclient import TestClient
 from main import app
 from app.config import settings
 from app.providers.base import AIProvider
+from app.providers.gemini import (
+    GeminiProvider,
+    GeminiAPIError,
+    GeminiRateLimitError,
+    GeminiServiceUnavailableError,
+    GeminiAuthError,
+)
 from app.providers.embeddings.mock_provider import MockEmbeddingProvider
 from app.schemas.document import DocumentChunk
 from app.schemas.search import SearchResultItem
@@ -591,4 +598,194 @@ class TestChatRAGIntegration:
         assert history[1]["role"] == "assistant"
         assert "Professor Dr. Md. Ismail Jabiullah" in history[1]["content"]
         assert "Page 4" in history[1]["content"]
+
+
+class TestGeminiReliabilityAndRetries:
+    """
+    Tests Gemini transient failure retries, Retry-After compliance,
+    exponential backoff, permanent error avoidance, and error sanitization.
+    """
+
+    @pytest.mark.asyncio
+    async def test_transient_429_rate_limit_retries_and_succeeds(self):
+        provider = GeminiProvider(
+            api_key="mock-key-12345",
+            model="gemini-2.5-flash",
+            max_retries=3,
+            initial_delay=0.01,
+            backoff_factor=1.5,
+        )
+
+        call_count = 0
+
+        class MockResponse:
+            text = "Successful answer after rate limit retry."
+
+        async def mock_generate_content(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                # Simulate 429 ResourceExhausted on first call
+                raise Exception("429 RESOURCE_EXHAUSTED: Rate limit exceeded")
+            return MockResponse()
+
+        provider.client.aio.models.generate_content = mock_generate_content
+
+        result = await provider.generate("What is Acme's 401k match?")
+        assert result == "Successful answer after rate limit retry."
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_transient_503_service_unavailable_retries(self):
+        provider = GeminiProvider(
+            api_key="mock-key-12345",
+            model="gemini-2.5-flash",
+            max_retries=2,
+            initial_delay=0.01,
+        )
+
+        call_count = 0
+
+        class MockResponse:
+            text = "Answer after 503 recovery."
+
+        async def mock_generate_content(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise Exception("503 Service Unavailable: backend overloaded")
+            return MockResponse()
+
+        provider.client.aio.models.generate_content = mock_generate_content
+
+        result = await provider.generate("Test query")
+        assert result == "Answer after 503 recovery."
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_respects_retry_after_header(self, monkeypatch):
+        provider = GeminiProvider(
+            api_key="mock-key-12345",
+            model="gemini-2.5-flash",
+            max_retries=2,
+            initial_delay=1.0,
+            max_delay=5.0,
+        )
+
+        slept_durations = []
+
+        async def mock_sleep(duration):
+            slept_durations.append(duration)
+
+        monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+        class ErrorWithHeaders(Exception):
+            def __init__(self):
+                super().__init__("429 Too Many Requests")
+                self.headers = {"Retry-After": "0.25"}
+
+        call_count = 0
+
+        class MockResponse:
+            text = "Success after header wait."
+
+        async def mock_generate_content(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise ErrorWithHeaders()
+            return MockResponse()
+
+        provider.client.aio.models.generate_content = mock_generate_content
+
+        result = await provider.generate("Test query")
+        assert result == "Success after header wait."
+        assert len(slept_durations) == 1
+        assert slept_durations[0] == 0.25
+
+    @pytest.mark.asyncio
+    async def test_exhausted_retries_raises_sanitized_gemini_rate_limit_error(self):
+        provider = GeminiProvider(
+            api_key="secret-gemini-key-AIzaSyD9876543210",
+            model="gemini-2.5-flash",
+            max_retries=2,
+            initial_delay=0.01,
+        )
+
+        call_count = 0
+
+        async def failing_generate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise Exception("429 RESOURCE_EXHAUSTED: key=AIzaSyD9876543210 free tier quota exceeded")
+
+        provider.client.aio.models.generate_content = failing_generate
+
+        with pytest.raises(GeminiRateLimitError) as exc_info:
+            await provider.generate("Test query")
+
+        assert exc_info.value.status_code == 429
+        # Ensure API key is NOT exposed in the user-facing exception!
+        assert "AIzaSyD9876543210" not in exc_info.value.message
+        assert "secret" not in exc_info.value.message
+        assert "rate limits" in exc_info.value.message.lower()
+        assert call_count == 3  # initial + 2 retries
+
+    @pytest.mark.asyncio
+    async def test_permanent_error_not_retried(self):
+        provider = GeminiProvider(
+            api_key="mock-key-12345",
+            model="gemini-2.5-flash",
+            max_retries=3,
+            initial_delay=0.01,
+        )
+
+        call_count = 0
+
+        async def mock_auth_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise Exception("401 Unauthorized: API key not valid")
+
+        provider.client.aio.models.generate_content = mock_auth_error
+
+        with pytest.raises(GeminiAuthError) as exc_info:
+            await provider.generate("Test query")
+
+        assert exc_info.value.status_code == 401
+        assert "authentication failed" in exc_info.value.message.lower()
+        # Permanent errors should fail immediately without retrying
+        assert call_count == 1
+
+    def test_conversations_api_handles_gemini_rate_limit_without_leaks(self, monkeypatch):
+        from app.routes import conversations as conv_module
+
+        class RateLimitedProvider(AIProvider):
+            async def generate(self, message: str) -> str:
+                raise GeminiRateLimitError(
+                    "The AI service is currently experiencing high demand or rate limits. Please try again shortly."
+                )
+
+            async def generate_stream(self, message: str):
+                raise GeminiRateLimitError(
+                    "The AI service is currently experiencing high demand or rate limits. Please try again shortly."
+                )
+                yield ""
+
+        monkeypatch.setattr(conv_module.ai_service, "provider", RateLimitedProvider())
+
+        conv_resp = client.post("/api/conversations", json={"title": "Rate Limit Test"})
+        conv_id = conv_resp.json()["id"]
+
+        msg_resp = client.post(
+            f"/api/conversations/{conv_id}/messages",
+            json={"message": "Hello AI", "use_rag": False},
+        )
+        assert msg_resp.status_code == 429
+        detail = msg_resp.json()["detail"]
+        assert "rate limits" in detail.lower()
+        # Ensure no internal secret or traceback leak
+        assert "Traceback" not in detail
+        assert "key" not in detail.lower()
+
 

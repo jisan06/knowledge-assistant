@@ -206,10 +206,23 @@ class SearchService:
         if len(embeddings) != len(valid_chunks):
             raise RuntimeError("Mismatch between chunks and generated embeddings.")
 
-        return self.vector_store.upsert_chunks(
-            chunks=valid_chunks,
-            embeddings=embeddings,
-        )
+        # Step 2: Store chunks in vector database with partial-state cleanup on failure
+        filename = valid_chunks[0].filename
+        try:
+            return self.vector_store.upsert_chunks(
+                chunks=valid_chunks,
+                embeddings=embeddings,
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to upsert chunks into vector store for '{filename}': {e}. "
+                "Cleaning up any partial vectors to maintain index consistency."
+            )
+            try:
+                self.vector_store.delete_by_filename(filename)
+            except Exception as cleanup_err:
+                logger.error(f"Failed to clean up partial chunks for '{filename}': {cleanup_err}")
+            raise
 
     async def replace_document_chunks(
         self,

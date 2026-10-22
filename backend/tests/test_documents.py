@@ -1,3 +1,4 @@
+import hashlib
 import io
 import pytest
 from fastapi.testclient import TestClient
@@ -834,6 +835,145 @@ def test_delete_failure_rolls_back_and_preserves_consistency(monkeypatch):
     assert search_resp.status_code == 200
     assert len(search_resp.json()["results"]) > 0
     assert "rollback protection" in search_resp.json()["results"][0]["text"]
+
+
+class TestDocumentUploadErrorHandlingAndReliability:
+    """
+    Tests error handling for invalid, corrupt, empty, unsupported,
+    and oversized PDF uploads, as well as indexing and embedding failure rollbacks.
+    """
+
+    def test_upload_empty_file_returns_400(self):
+        resp = client.post(
+            "/api/documents/upload",
+            files={"file": ("empty.pdf", b"", "application/pdf")},
+        )
+        assert resp.status_code == 400
+        assert "empty" in resp.json()["detail"].lower()
+
+    def test_upload_corrupt_pdf_returns_422(self):
+        corrupt_bytes = b"%PDF-1.4\n corrupted stream garbage \x00\xff\xfe\x00 no catalog no xref"
+        resp = client.post(
+            "/api/documents/upload",
+            files={"file": ("corrupt.pdf", corrupt_bytes, "application/pdf")},
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"].lower()
+        assert "corrupt" in detail or "malformed" in detail or "invalid" in detail
+
+    def test_upload_unsupported_file_extension_returns_400(self):
+        resp = client.post(
+            "/api/documents/upload",
+            files={"file": ("document.docx", b"PK\x03\x04 fake docx binary", "application/vnd.openxmlformats")},
+        )
+        assert resp.status_code == 400
+        assert "only pdf files" in resp.json()["detail"].lower()
+
+    def test_upload_non_pdf_content_disguised_as_pdf_returns_422(self):
+        resp = client.post(
+            "/api/documents/upload",
+            files={"file": ("fake.pdf", b"This is just plain text content without a PDF header.", "application/pdf")},
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"].lower()
+        assert "invalid file format" in detail or "header" in detail or "standard pdf" in detail
+
+    def test_upload_oversized_pdf_returns_413(self, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "MAX_UPLOAD_SIZE_BYTES", 1024)
+
+        oversized_bytes = b"%PDF-1.4\n" + (b"A" * 2048)
+        resp = client.post(
+            "/api/documents/upload",
+            files={"file": ("oversized.pdf", oversized_bytes, "application/pdf")},
+        )
+        assert resp.status_code == 413
+        assert "exceeds" in resp.json()["detail"].lower()
+
+    def test_indexing_failure_cleans_up_partial_vectors_and_db(self, monkeypatch):
+        from app.vector_store.factory import get_vector_store
+        from app.db.session import SessionLocal
+        from app.db.models import UploadedDocument
+        store = get_vector_store()
+        initial_count = store.count()
+
+        filename = "fail_new_index.pdf"
+        pdf_bytes = generate_text_pdf("Document intended to fail during vector upsert.")
+
+        def failing_upsert(*args, **kwargs):
+            raise RuntimeError("Simulated vector storage disk error")
+
+        monkeypatch.setattr(store, "upsert_chunks", failing_upsert)
+
+        resp = client.post(
+            "/api/documents/upload",
+            files={"file": (filename, pdf_bytes, "application/pdf")},
+        )
+        assert resp.status_code == 500
+
+        monkeypatch.undo()
+
+        # Vector store must NOT have partial chunks for this document
+        assert store.count() == initial_count
+        assert len(store.get_by_filename(filename)) == 0
+
+        # Database must NOT have record (rolled back)
+        db = SessionLocal()
+        try:
+            doc = db.query(UploadedDocument).filter(UploadedDocument.filename == filename).first()
+            assert doc is None
+        finally:
+            db.close()
+
+    def test_update_embedding_failure_preserves_previous_working_version(self, monkeypatch):
+        from app.vector_store.factory import get_vector_store
+        from app.db.session import SessionLocal
+        from app.db.models import UploadedDocument
+        store = get_vector_store()
+
+        filename = "working_version_protect.pdf"
+        v1_bytes = generate_text_pdf("Version 1 content: active stable policy.")
+        v1_hash = hashlib.sha256(v1_bytes).hexdigest()
+
+        # Upload V1 successfully
+        resp1 = client.post(
+            "/api/documents/upload",
+            files={"file": (filename, v1_bytes, "application/pdf")},
+        )
+        assert resp1.status_code == 200
+
+        # Simulate embedding service failure during V2 update
+        from app.services.embedding_service import EmbeddingService, EmbeddingServiceError
+
+        def failing_embed_chunks(self, chunks):
+            raise EmbeddingServiceError("Simulated embedding model out of memory", status_code=503)
+
+        monkeypatch.setattr(EmbeddingService, "embed_chunks", failing_embed_chunks)
+
+        v2_bytes = generate_text_pdf("Version 2 content: updated experimental policy.")
+        resp2 = client.post(
+            "/api/documents/upload",
+            files={"file": (filename, v2_bytes, "application/pdf")},
+        )
+        assert resp2.status_code == 503
+
+        monkeypatch.undo()
+
+        # Previous version V1 must be preserved in vector store and queryable
+        search_resp = client.post("/api/documents/search", json={"query": "active stable policy", "top_k": 2})
+        assert search_resp.status_code == 200
+        assert len(search_resp.json()["results"]) > 0
+        assert "active stable policy" in search_resp.json()["results"][0]["text"]
+
+        # Database must still reflect V1
+        db = SessionLocal()
+        try:
+            doc = db.query(UploadedDocument).filter(UploadedDocument.filename == filename).first()
+            assert doc is not None
+            assert doc.content_hash == v1_hash
+        finally:
+            db.close()
+
 
 
 

@@ -1,11 +1,13 @@
+import asyncio
 import json
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db, SessionLocal
+from app.providers.gemini import GeminiAPIError
 from app.schemas.chat import (
     ConversationCreate,
     ConversationUpdate,
@@ -127,11 +129,19 @@ async def send_message(
             reply_text = await rag_service.chat(user_text)
         else:
             reply_text = await ai_service.chat(user_text)
+    except GeminiAPIError as e:
+        logger.warning(f"AI service domain error: {e.status_code} - {e.message}")
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.message,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Error in send_message")
+        logger.exception("Unexpected error in send_message")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="AI service temporarily unavailable. Please try again.",
+            detail="The AI service is temporarily unavailable. Please try again.",
         )
 
     user_msg, assistant_msg = ChatHistoryService.add_user_message_and_reply(
@@ -151,13 +161,14 @@ async def send_message(
 async def send_message_stream(
     conversation_id: str,
     payload: MessageCreate,
+    request: Request,
     use_rag: Optional[bool] = Query(None, description="Optional override to enable/disable RAG"),
     db: Session = Depends(get_db),
 ):
     """
     Streaming endpoint: Progressively yields AI response chunks via Server-Sent Events (SSE).
     Persists user message upfront, streams chunks, and persists assistant message upon completion.
-    Supports document-grounded RAG retrieval when use_rag is True.
+    Safely handles client disconnects, timeouts, and rate limits without exposing secrets.
     """
     user_text = payload.message.strip()
     if not user_text:
@@ -195,9 +206,19 @@ async def send_message_stream(
                 else ai_service.chat_stream(user_text)
             )
             async for chunk in stream_gen:
+                # Handle client disconnect safely during stream emission
+                if await request.is_disconnected():
+                    logger.info(f"Client disconnected during streaming for conversation {conversation_id}")
+                    return
+
                 accumulated_text += chunk
                 chunk_data = json.dumps({"chunk": chunk})
                 yield f"event: chunk\ndata: {chunk_data}\n\n"
+
+            # Check if client disconnected right at stream completion
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected before completion event for conversation {conversation_id}")
+                return
 
             # Generation succeeded: persist the completed assistant message
             db_final = SessionLocal()
@@ -212,6 +233,16 @@ async def send_message_stream(
             finally:
                 db_final.close()
 
+        except asyncio.CancelledError:
+            logger.info(f"Client stream cancelled for conversation {conversation_id}")
+            return
+        except GeminiAPIError as e:
+            logger.warning(f"AI service error during streaming: {e.status_code} - {e.message}")
+            error_data = json.dumps({
+                "error": e.message,
+                "status_code": e.status_code,
+            })
+            yield f"event: error\ndata: {error_data}\n\n"
         except Exception:
             logger.exception("Error during AI response streaming")
             error_data = json.dumps({

@@ -10,6 +10,8 @@ from scripts.evaluate_rag import (
     extract_cited_pages,
     check_citation_correctness,
     check_refusal_accuracy,
+    evaluate_answer_facts,
+    normalize_fact_text,
     RAGEvaluator,
 )
 from scripts.generate_sample_pdf import HANDBOOK_PAGES, create_pdf_bytes
@@ -272,4 +274,195 @@ class TestRetrievalQualityRegression:
         assert reranked[0].similarity_score == 0.75
         assert reranked[1].chunk_id == "doc_p2_c1"
         assert reranked[1].similarity_score == 0.60
+
+
+class TestAnswerQualityEvaluation:
+    """Tests grounded lexical fact matching and answer quality evaluation."""
+
+    def test_fact_normalization_and_matching(self):
+        # Case, percentages, numbers, hyphens
+        ans = "Acme covers 90% of health insurance premiums and matches 100% of 401(k) up to 4% with a $1,200 tech stipend."
+        facts = ["90 percent", "100 percent", "4 percent", "1,200 dollars"]
+        verified, coverage, matched, missing = evaluate_answer_facts(ans, facts)
+        assert verified is True
+        assert coverage == 1.0
+        assert len(missing) == 0
+
+    def test_fact_coverage_calculation(self):
+        # Partial match: 2 out of 3 facts present
+        ans = "Employees are paid bi-weekly on alternating Fridays."
+        facts = ["bi-weekly", "alternating Fridays", "direct deposit"]
+        verified, coverage, matched, missing = evaluate_answer_facts(ans, facts)
+        assert round(coverage, 2) == 0.67
+        assert "direct deposit" in missing
+        assert "bi-weekly" in matched
+        assert "alternating Fridays" in matched
+
+    def test_empty_facts_for_unanswerables(self):
+        verified, coverage, matched, missing = evaluate_answer_facts(
+            "The uploaded documents do not provide enough information.", []
+        )
+        assert verified is True
+        assert coverage == 1.0
+        assert matched == []
+        assert missing == []
+
+
+class TestEvaluationSubsetFiltering:
+    """Verifies that RAGEvaluator correctly filters datasets by limit, category, and IDs."""
+
+    @pytest.fixture
+    def dataset_path(self):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_dir, "data", "eval_dataset.json")
+
+    @pytest.mark.asyncio
+    async def test_subset_limit_evaluation(self, dataset_path):
+        evaluator = RAGEvaluator(
+            top_k=2,
+            use_mock_llm=True,
+            use_mock_embeddings=True,
+            store_type="memory",
+        )
+        results = await evaluator.evaluate_dataset(dataset_path, limit=3)
+        summary = results["summary"]
+        details = results["detailed_results"]
+
+        assert summary["total_questions"] == 3
+        assert summary["dataset_total"] == 20
+        assert summary["subset_evaluated"] is True
+        assert len(details) == 3
+
+    @pytest.mark.asyncio
+    async def test_subset_category_evaluation(self, dataset_path):
+        evaluator = RAGEvaluator(
+            top_k=2,
+            use_mock_llm=True,
+            use_mock_embeddings=True,
+            store_type="memory",
+        )
+        results = await evaluator.evaluate_dataset(dataset_path, category="unanswerable")
+        summary = results["summary"]
+        details = results["detailed_results"]
+
+        assert summary["total_questions"] == 5
+        assert summary["unanswerable_questions"] == 5
+        assert summary["answerable_questions"] == 0
+        assert all(item["is_answerable"] is False for item in details)
+
+    @pytest.mark.asyncio
+    async def test_subset_question_ids_evaluation(self, dataset_path):
+        evaluator = RAGEvaluator(
+            top_k=2,
+            use_mock_llm=True,
+            use_mock_embeddings=True,
+            store_type="memory",
+        )
+        results = await evaluator.evaluate_dataset(dataset_path, question_ids=["q01", "q16"])
+        summary = results["summary"]
+        details = results["detailed_results"]
+
+        assert summary["total_questions"] == 2
+        assert [d["id"] for d in details] == ["q01", "q16"]
+
+
+class TestRealPipelineErrorHandling:
+    """Tests Gemini rate limits, temporary service errors, and failure tracking."""
+
+    @pytest.mark.asyncio
+    async def test_transient_rate_limit_retry(self):
+        evaluator = RAGEvaluator(
+            top_k=2,
+            use_mock_llm=True,
+            use_mock_embeddings=True,
+            store_type="memory",
+        )
+
+        call_count = 0
+
+        async def mock_chat(msg, top_k=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise Exception("429 ResourceExhausted: rate limit exceeded")
+            return "Employees are required to work on-site on Tuesdays [Source: company_handbook.pdf, Page 1]."
+
+        evaluator.rag_service.chat = mock_chat
+
+        ans, err = await evaluator._generate_rag_answer(
+            "When are employees on site?", top_k=2, max_retries=3, initial_backoff=0.01
+        )
+        assert err is None
+        assert ans is not None
+        assert "Tuesdays" in ans
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_persistent_api_error_not_counted_as_refusal_or_correct(self):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dataset_path = os.path.join(base_dir, "data", "eval_dataset.json")
+
+        evaluator = RAGEvaluator(
+            top_k=2,
+            use_mock_llm=True,
+            use_mock_embeddings=True,
+            store_type="memory",
+        )
+
+        async def failing_chat(msg, top_k=None):
+            raise Exception("429 ResourceExhausted: free tier quota exhausted")
+
+        evaluator.rag_service.chat = failing_chat
+
+        # Evaluate 1 answerable (q01) and 1 unanswerable (q16)
+        results = await evaluator.evaluate_dataset(dataset_path, question_ids=["q01", "q16"])
+        summary = results["summary"]
+        details = results["detailed_results"]
+
+        assert summary["metrics"]["api_errors"] == 2
+        assert len(details) == 2
+
+        # Answerable question q01
+        q01 = next(item for item in details if item["id"] == "q01")
+        assert q01["api_error"] is True
+        assert q01["citation_correct"] is False
+        assert q01["facts_verified"] is False
+        assert "[API ERROR" in q01["answer"]
+
+        # Unanswerable question q16 (Must NOT count as a valid refusal!)
+        q16 = next(item for item in details if item["id"] == "q16")
+        assert q16["api_error"] is True
+        assert q16["refusal_correct"] is False
+        assert "[API ERROR" in q16["answer"]
+
+
+class TestPipelineMetadata:
+    """Verifies that pipeline mode metadata clearly distinguishes real from mock execution."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_mode_metadata(self):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dataset_path = os.path.join(base_dir, "data", "eval_dataset.json")
+
+        mock_evaluator = RAGEvaluator(
+            top_k=2,
+            use_mock_llm=True,
+            use_mock_embeddings=True,
+            store_type="memory",
+        )
+        mock_res = await mock_evaluator.evaluate_dataset(dataset_path, limit=1)
+        assert mock_res["summary"]["pipeline_mode"] == "mock_pipeline"
+        assert mock_res["summary"]["is_real_pipeline"] is False
+        assert mock_res["summary"]["llm_mode"] == "mock_deterministic"
+
+        # Evaluator configured with mock_llm=False and mock_embeddings=False is marked as real pipeline
+        live_evaluator = RAGEvaluator(
+            top_k=2,
+            use_mock_llm=False,
+            use_mock_embeddings=False,
+            store_type="memory",
+        )
+        assert live_evaluator.use_mock_llm is False
+        assert live_evaluator.use_mock_embeddings is False
+
 

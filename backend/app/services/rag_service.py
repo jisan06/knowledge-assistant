@@ -84,7 +84,7 @@ class RAGService:
             chunks = await self.retrieve_context(clean_query, top_k=top_k)
         except Exception as e:
             logger.exception("Error retrieving document chunks for RAG")
-            return f"An error occurred while retrieving document context: {str(e)}"
+            return "An error occurred while retrieving document context. Please try again."
 
         if not chunks:
             return (
@@ -116,7 +116,7 @@ class RAGService:
             chunks = await self.retrieve_context(clean_query, top_k=top_k)
         except Exception as e:
             logger.exception("Error retrieving document chunks for RAG")
-            yield f"An error occurred while retrieving document context: {str(e)}"
+            yield "An error occurred while retrieving document context. Please try again."
             return
 
         if not chunks:
