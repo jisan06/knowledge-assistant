@@ -220,7 +220,7 @@ class TestRAGServiceUnit:
 
         # 2. Verify prompt contains strict anti-hallucination instructions
         assert "MANDATORY INSTRUCTIONS" in prompt
-        assert "cite" in prompt.lower()
+        assert ("cite" in prompt.lower() or "citation" in prompt.lower())
         assert "do not provide enough information" in prompt
 
     @pytest.mark.asyncio

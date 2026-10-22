@@ -31,6 +31,9 @@ class IndexDocumentResponse(BaseModel):
     total_chunks: int = Field(..., description="Total chunks extracted")
     indexed_chunks: int = Field(..., description="Number of chunk vectors stored in vector database")
     message: str = Field(..., description="Status summary of the indexing operation")
+    is_duplicate: bool = Field(default=False, description="True if the uploaded document content already exists in the system")
+    is_updated: bool = Field(default=False, description="True if an existing document with the same filename was updated")
+    content_hash: Optional[str] = Field(default=None, description="SHA-256 hash of the uploaded document content")
 
 
 class CollectionStatsResponse(BaseModel):

@@ -1,8 +1,12 @@
+import hashlib
 import logging
 from typing import Optional
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.db.models import UploadedDocument
+from app.db.session import get_db
 from app.schemas.document import (
     DocumentUploadResponse,
     ChunkPreviewRequest,
@@ -51,11 +55,13 @@ async def upload_document(
     file: UploadFile = File(..., description="PDF document to parse and extract"),
     embed: bool = False,
     index: bool = Query(default=True, description="Automatically generate embeddings and index chunks into vector store"),
+    db: Session = Depends(get_db),
 ):
     """
     Accepts a single PDF file, validates format and size limits, and extracts
     text page-by-page in memory. Automatically generates embeddings and indexes
     chunks into vector storage by default (index=True) for immediate RAG retrieval.
+    Detects duplicate content using SHA-256 hash to prevent redundant extraction and indexing.
     """
     # Quick client-provided metadata validation
     filename = file.filename or ""
@@ -87,6 +93,46 @@ async def upload_document(
     finally:
         await file.close()
 
+    # Calculate SHA-256 content hash for duplicate detection
+    content_hash = hashlib.sha256(content).hexdigest()
+
+    # 1. Duplicate check: detect identical file content using SHA-256 hash
+    existing_content_doc = (
+        db.query(UploadedDocument)
+        .filter(UploadedDocument.content_hash == content_hash)
+        .first()
+    )
+    if existing_content_doc:
+        logger.info(
+            f"Duplicate document detected for '{filename}' (matches existing '{existing_content_doc.filename}' "
+            f"with hash {content_hash[:8]}...). Skipping re-extraction and re-indexing."
+        )
+        return DocumentUploadResponse(
+            filename=filename,
+            total_pages=existing_content_doc.total_pages,
+            total_characters=existing_content_doc.total_characters,
+            has_extractable_text=existing_content_doc.has_extractable_text,
+            pages=[],
+            total_chunks=existing_content_doc.total_chunks,
+            chunks=[],
+            indexed_chunks=existing_content_doc.indexed_chunks,
+            is_duplicate=True,
+            is_updated=False,
+            content_hash=content_hash,
+            message=(
+                f"Document '{filename}' with identical content has already been uploaded "
+                f"and indexed ({existing_content_doc.indexed_chunks} chunks). Skipping re-extraction and re-indexing."
+            ),
+        )
+
+    # 2. Check if a document with the same filename was previously indexed with different content (update case)
+    existing_doc_by_name = (
+        db.query(UploadedDocument)
+        .filter(UploadedDocument.filename == filename)
+        .first()
+    )
+    is_update = existing_doc_by_name is not None
+
     # Process PDF strictly in memory
     try:
         result = PDFService.extract_text(
@@ -95,36 +141,81 @@ async def upload_document(
             max_bytes=settings.MAX_UPLOAD_SIZE_BYTES,
         )
 
+        if is_update and not result.has_extractable_text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot update '{filename}' with a document that contains no extractable text.",
+            )
+
         if index and result.has_extractable_text and result.chunks:
             search_service = SearchService()
-            indexed_count = await search_service.index_chunks(result.chunks)
-            result.indexed_chunks = indexed_count
-            result.message = (
-                f"Successfully extracted text from {result.total_pages} page(s) "
-                f"({result.total_characters} characters, {len(result.chunks)} chunks) "
-                f"and indexed {indexed_count} chunk(s) into the knowledge base."
-            )
+            if is_update:
+                indexed_count = await search_service.replace_document_chunks(filename, result.chunks)
+                result.indexed_chunks = indexed_count
+                result.message = (
+                    f"Successfully updated '{result.filename}': extracted text from {result.total_pages} page(s) "
+                    f"({result.total_characters} characters, {len(result.chunks)} chunks) "
+                    f"and replaced {indexed_count} chunk(s) in the knowledge base."
+                )
+            else:
+                indexed_count = await search_service.index_chunks(result.chunks)
+                result.indexed_chunks = indexed_count
+                result.message = (
+                    f"Successfully extracted text from {result.total_pages} page(s) "
+                    f"({result.total_characters} characters, {len(result.chunks)} chunks) "
+                    f"and indexed {indexed_count} chunk(s) into the knowledge base."
+                )
         elif embed and result.has_extractable_text and result.chunks:
             embedding_service = EmbeddingService()
             await embedding_service.embed_chunks(result.chunks)
 
+        # Record or update uploaded document tracking entry in database with content hash
+        if is_update and existing_doc_by_name:
+            existing_doc_by_name.content_hash = content_hash
+            existing_doc_by_name.total_pages = result.total_pages
+            existing_doc_by_name.total_characters = result.total_characters
+            existing_doc_by_name.total_chunks = len(result.chunks)
+            existing_doc_by_name.indexed_chunks = result.indexed_chunks
+            existing_doc_by_name.has_extractable_text = result.has_extractable_text
+            db.commit()
+        else:
+            doc_record = UploadedDocument(
+                filename=filename,
+                content_hash=content_hash,
+                total_pages=result.total_pages,
+                total_characters=result.total_characters,
+                total_chunks=len(result.chunks),
+                indexed_chunks=result.indexed_chunks,
+                has_extractable_text=result.has_extractable_text,
+            )
+            db.add(doc_record)
+            db.commit()
+
+        result.is_duplicate = False
+        result.is_updated = is_update
+        result.content_hash = content_hash
         return result
 
     except PDFServiceError as e:
-        # Expected domain validation errors
+        db.rollback()
         raise HTTPException(
             status_code=e.status_code,
             detail=e.message,
         )
 
     except EmbeddingServiceError as e:
+        db.rollback()
         raise HTTPException(
             status_code=e.status_code,
             detail=e.message,
         )
 
+    except HTTPException:
+        db.rollback()
+        raise
+
     except Exception as e:
-        # Catch-all to never expose internal exceptions or stack traces
+        db.rollback()
         logger.exception("Unexpected error occurred while processing PDF document")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -303,10 +394,12 @@ async def semantic_search_get(
 )
 async def index_pdf_document(
     file: UploadFile = File(..., description="PDF document to parse, chunk, embed, and store in vector index"),
+    db: Session = Depends(get_db),
 ):
     """
     End-to-end endpoint: validates PDF, extracts text page-by-page, generates
     chunks with stable IDs, embeds them, and upserts them into vector storage.
+    Detects duplicate content using SHA-256 hash to prevent redundant extraction and indexing.
     """
     filename = file.filename or ""
     content_type = (file.content_type or "").lower()
@@ -335,6 +428,41 @@ async def index_pdf_document(
     finally:
         await file.close()
 
+    content_hash = hashlib.sha256(content).hexdigest()
+
+    # Duplicate check for /index endpoint
+    existing_content_doc = (
+        db.query(UploadedDocument)
+        .filter(UploadedDocument.content_hash == content_hash)
+        .first()
+    )
+    if existing_content_doc:
+        logger.info(
+            f"Duplicate document detected in /index for '{filename}' with hash {content_hash[:8]}... "
+            f"already indexed ({existing_content_doc.indexed_chunks} chunks). Skipping re-indexing."
+        )
+        return IndexDocumentResponse(
+            filename=filename,
+            total_pages=existing_content_doc.total_pages,
+            total_chunks=existing_content_doc.total_chunks,
+            indexed_chunks=existing_content_doc.indexed_chunks,
+            is_duplicate=True,
+            is_updated=False,
+            content_hash=content_hash,
+            message=(
+                f"Document '{filename}' with identical content already exists "
+                f"({existing_content_doc.indexed_chunks} chunk(s)). Skipping re-indexing."
+            ),
+        )
+
+    # Check if a document with the same filename was previously indexed with different content (update case)
+    existing_doc_by_name = (
+        db.query(UploadedDocument)
+        .filter(UploadedDocument.filename == filename)
+        .first()
+    )
+    is_update = existing_doc_by_name is not None
+
     try:
         result = PDFService.extract_text(
             file_bytes=content,
@@ -349,24 +477,60 @@ async def index_pdf_document(
             )
 
         search_service = SearchService()
-        indexed_count = await search_service.index_chunks(result.chunks)
+        if is_update:
+            indexed_count = await search_service.replace_document_chunks(filename, result.chunks)
+            message = (
+                f"Successfully updated and re-indexed {indexed_count} chunks from '{result.filename}' "
+                f"across {result.total_pages} page(s)."
+            )
+        else:
+            indexed_count = await search_service.index_chunks(result.chunks)
+            message = (
+                f"Successfully indexed {indexed_count} chunks from '{result.filename}' "
+                f"across {result.total_pages} page(s)."
+            )
+
+        # Record or update document metadata with content hash
+        if is_update and existing_doc_by_name:
+            existing_doc_by_name.content_hash = content_hash
+            existing_doc_by_name.total_pages = result.total_pages
+            existing_doc_by_name.total_characters = result.total_characters
+            existing_doc_by_name.total_chunks = len(result.chunks)
+            existing_doc_by_name.indexed_chunks = indexed_count
+            existing_doc_by_name.has_extractable_text = result.has_extractable_text
+            db.commit()
+        else:
+            doc_record = UploadedDocument(
+                filename=result.filename,
+                content_hash=content_hash,
+                total_pages=result.total_pages,
+                total_characters=result.total_characters,
+                total_chunks=len(result.chunks),
+                indexed_chunks=indexed_count,
+                has_extractable_text=result.has_extractable_text,
+            )
+            db.add(doc_record)
+            db.commit()
 
         return IndexDocumentResponse(
             filename=result.filename,
             total_pages=result.total_pages,
             total_chunks=len(result.chunks),
             indexed_chunks=indexed_count,
-            message=(
-                f"Successfully indexed {indexed_count} chunks from '{result.filename}' "
-                f"across {result.total_pages} page(s)."
-            ),
+            is_duplicate=False,
+            is_updated=is_update,
+            content_hash=content_hash,
+            message=message,
         )
 
     except (PDFServiceError, EmbeddingServiceError) as e:
+        db.rollback()
         raise HTTPException(status_code=e.status_code, detail=e.message)
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
+        db.rollback()
         logger.exception("Unexpected error while indexing PDF")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -430,12 +594,17 @@ def get_collection_stats():
     status_code=status.HTTP_200_OK,
     summary="Clear all indexed chunks from the vector store collection",
 )
-def clear_collection():
+def clear_collection(db: Session = Depends(get_db)):
     """
-    Clears all chunk embeddings from the vector store. Useful for testing and resets.
+    Clears all chunk embeddings from the vector store and clears document tracking records.
     """
     search_service = SearchService()
     search_service.clear()
+    try:
+        db.query(UploadedDocument).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
     return {"status": "success", "message": "Vector collection cleared successfully."}
 
 

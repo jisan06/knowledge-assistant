@@ -272,6 +272,22 @@ class RAGEvaluator:
             retrieved_chunks = search_resp.results
             retrieved_pages = [c.page_number for c in retrieved_chunks]
 
+            # Detailed retrieval diagnostics for transparency and scoring inspection
+            retrieval_diagnostics = [
+                {
+                    "rank": rank,
+                    "chunk_id": c.chunk_id,
+                    "filename": c.filename,
+                    "page_number": c.page_number,
+                    "chunk_index": c.chunk_index,
+                    "similarity_score": c.similarity_score,
+                    "distance": c.distance,
+                    "text_snippet": (c.text[:140] + "...") if len(c.text) > 140 else c.text,
+                    "text": c.text,
+                }
+                for rank, c in enumerate(retrieved_chunks, start=1)
+            ]
+
             # 2. Answer Generation Evaluation
             answer_text = await self.rag_service.chat(question, top_k=self.top_k)
 
@@ -311,6 +327,7 @@ class RAGEvaluator:
                 "retrieved_pages": retrieved_pages,
                 "recall_at_k": recall_pass if is_answerable else None,
                 "reciprocal_rank": rr if is_answerable else None,
+                "retrieval_diagnostics": retrieval_diagnostics,
                 "answer": answer_text,
                 "cited_pages": extract_cited_pages(answer_text),
                 "citation_correct": citation_pass,
@@ -347,7 +364,7 @@ class RAGEvaluator:
 # CLI Entrypoint & Formatted Output
 # ---------------------------------------------------------------------------
 
-def print_evaluation_report(results: Dict[str, Any]):
+def print_evaluation_report(results: Dict[str, Any], show_diagnostics: bool = False):
     summary = results["summary"]
     metrics = summary["metrics"]
     details = results["detailed_results"]
@@ -403,6 +420,39 @@ def print_evaluation_report(results: Dict[str, Any]):
             print(f"  - [{qid}] '{qtext}' -> {reason}")
     else:
         print("\nAll 20 test questions passed their respective evaluation criteria!")
+
+    if show_diagnostics:
+        print("\n" + "=" * 80)
+        print("               DETAILED RETRIEVAL DIAGNOSTICS PER QUERY                 ")
+        print("=" * 80)
+        for item in details:
+            qid = item["id"]
+            question = item["question"]
+            exp = item["expected_pages"]
+            rec_status = "PASS" if item["recall_at_k"] else ("N/A" if item["recall_at_k"] is None else "FAIL")
+            print(f"\n[{qid}] {question}")
+            print(f"  Category: {item['category']} | Expected Pages: {exp or 'None (Unanswerable)'} | Retrieval: {rec_status}")
+            print("  Retrieved Chunks:")
+            for diag in item.get("retrieval_diagnostics", []):
+                rank = diag["rank"]
+                cid = diag["chunk_id"]
+                fn = diag["filename"]
+                pg = diag["page_number"]
+                sim = diag["similarity_score"]
+                dist = diag["distance"]
+                snip = diag["text_snippet"].replace("\n", " ")
+                print(f"    #{rank} | Page {pg} | Sim: {sim:.4f} | Dist: {dist:.4f} | File: {fn} | ID: {cid}")
+                print(f"         Excerpt: \"{snip}\"")
+            if item.get("answer"):
+                first_line = item["answer"].split("\n")[0]
+                if len(first_line) > 120:
+                    first_line = first_line[:120] + "..."
+                print(f"  Answer: \"{first_line}\"")
+                print(f"  Citations: {item.get('cited_pages', [])}")
+        print("=" * 80)
+    else:
+        print("\n[Tip] Run with --diagnostics (or -d) to view chunk text, chunk IDs, and similarity scores per query.")
+
     print("=" * 80 + "\n")
 
 
@@ -412,6 +462,7 @@ async def main():
     parser.add_argument("--live-llm", action="store_true", help="Call live Gemini API (default: uses deterministic mock LLM)")
     parser.add_argument("--mock-llm", action="store_true", default=False, help="Use deterministic mock LLM for offline evaluation (active by default unless --live-llm is passed)")
     parser.add_argument("--mock-embeddings", action="store_true", help="Use MockEmbeddingProvider for offline test environments")
+    parser.add_argument("--diagnostics", "-d", action="store_true", help="Display detailed retrieval diagnostics (chunk ID, text snippet, similarity & distance scores)")
     parser.add_argument("--store-type", type=str, default="memory", choices=["memory", "chroma"], help="Vector store implementation")
     parser.add_argument("--dataset", type=str, default=os.path.join(BACKEND_DIR, "data", "eval_dataset.json"), help="Path to evaluation dataset JSON")
     parser.add_argument("--output", type=str, default=os.path.join(BACKEND_DIR, "data", "eval_results.json"), help="Path to save evaluation output JSON")
@@ -434,7 +485,7 @@ async def main():
     )
 
     results = await evaluator.evaluate_dataset(args.dataset)
-    print_evaluation_report(results)
+    print_evaluation_report(results, show_diagnostics=args.diagnostics)
 
     # Save results to JSON file
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)

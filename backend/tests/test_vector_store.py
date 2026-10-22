@@ -164,6 +164,32 @@ class TestInMemoryVectorStore:
         assert len(results) == 1
         assert results[0].filename == "memo.pdf"
 
+    def test_get_by_filename_and_restore_records(self, empty_store):
+        chunks = [
+            DocumentChunk(
+                chunk_id="docA_p1_c1",
+                filename="docA.pdf",
+                page_number=1,
+                chunk_index=1,
+                text="Doc A backup test",
+                char_count=17,
+            ),
+        ]
+        empty_store.upsert_chunks(chunks=chunks, embeddings=[[1.0, 0.0]])
+        backup = empty_store.get_by_filename("docA.pdf")
+        assert len(backup) == 1
+        assert backup[0]["text"] == "Doc A backup test"
+
+        empty_store.delete_by_filename("docA.pdf")
+        assert empty_store.count() == 0
+
+        empty_store.restore_records(backup)
+        assert empty_store.count() == 1
+        res = empty_store.search(query_vector=[1.0, 0.0], top_k=1)
+        assert len(res) == 1
+        assert res[0].text == "Doc A backup test"
+
+
 
 # ---------------------------------------------------------------------------
 # Unit Tests: SearchService with Mock Embeddings (Dimension Compatibility)
@@ -198,22 +224,24 @@ class TestSearchService:
     @pytest.mark.asyncio
     async def test_dimension_compatibility_and_metadata_retrieval(self, search_service):
         """Verifies that query vector and chunk vectors share identical dimensions (384)."""
+        page1_text = (
+            "Antigravity is an advanced agentic coding assistant with rich developer tools. "
+            "It supports FastAPI backend architecture and semantic vector indexing."
+        )
+        page2_text = (
+            "Marine biology studies oceanic organisms, coral reef preservation, and deep sea life. "
+            "Whales and dolphins navigate using echolocation."
+        )
         pages = [
             DocumentPage(
                 page_number=1,
-                character_count=100,
-                text=(
-                    "Antigravity is an advanced agentic coding assistant with rich developer tools. "
-                    "It supports FastAPI backend architecture and semantic vector indexing."
-                ),
+                char_count=len(page1_text),
+                text=page1_text,
             ),
             DocumentPage(
                 page_number=2,
-                character_count=90,
-                text=(
-                    "Marine biology studies oceanic organisms, coral reef preservation, and deep sea life. "
-                    "Whales and dolphins navigate using echolocation."
-                ),
+                char_count=len(page2_text),
+                text=page2_text,
             ),
         ]
 

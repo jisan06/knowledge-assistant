@@ -24,6 +24,8 @@ export function ExtractionResults({ result, onReset }: ExtractionResultsProps) {
     pages,
     total_chunks,
     indexed_chunks,
+    is_updated,
+    is_duplicate,
   } = result;
 
   const isIndexed = typeof indexed_chunks === 'number' && indexed_chunks > 0;
@@ -78,6 +80,12 @@ export function ExtractionResults({ result, onReset }: ExtractionResultsProps) {
 
           {/* Stats chips */}
           <div className="flex flex-wrap gap-2">
+            {is_updated && (
+              <StatChip label="Status" value="Updated" variant="success" />
+            )}
+            {is_duplicate && (
+              <StatChip label="Status" value="Existing (Cached)" />
+            )}
             <StatChip label="Pages" value={String(total_pages)} />
             {has_extractable_text && (
               <>
@@ -95,14 +103,16 @@ export function ExtractionResults({ result, onReset }: ExtractionResultsProps) {
       </div>
 
       {/* Per-page results */}
-      <div className="space-y-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-          Extracted Pages
-        </h2>
-        {pages.map((page, idx) => (
-          <PageResult key={page.page_number} page={page} isFirst={idx === 0} />
-        ))}
-      </div>
+      {pages && pages.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+            Extracted Pages
+          </h2>
+          {pages.map((page, idx) => (
+            <PageResult key={page.page_number} page={page} isFirst={idx === 0} />
+          ))}
+        </div>
+      )}
 
       {/* Action buttons */}
       <div className="flex flex-wrap items-center gap-3 pt-2">

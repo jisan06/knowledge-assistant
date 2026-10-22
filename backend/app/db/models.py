@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index, Integer, Boolean
 from sqlalchemy.orm import relationship
 
 from app.db.session import Base
@@ -47,4 +47,24 @@ class Message(Base):
 
     __table_args__ = (
         Index("ix_messages_conversation_created", "conversation_id", "created_at"),
+    )
+
+
+class UploadedDocument(Base):
+    """Tracks uploaded PDF documents by SHA-256 content hash to detect and handle duplicates."""
+    __tablename__ = "uploaded_documents"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename = Column(String(255), nullable=False)
+    content_hash = Column(String(64), nullable=False, unique=True, index=True)
+    total_pages = Column(Integer, nullable=False, default=0)
+    total_characters = Column(Integer, nullable=False, default=0)
+    total_chunks = Column(Integer, nullable=False, default=0)
+    indexed_chunks = Column(Integer, nullable=False, default=0)
+    has_extractable_text = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    __table_args__ = (
+        Index("ix_uploaded_documents_content_hash", "content_hash"),
+        Index("ix_uploaded_documents_filename", "filename"),
     )

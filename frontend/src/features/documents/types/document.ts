@@ -35,6 +35,9 @@ export interface DocumentUploadResponse {
   chunks?: DocumentChunk[];
   indexed_chunks?: number;
   message: string;
+  is_duplicate?: boolean;
+  is_updated?: boolean;
+  content_hash?: string;
 }
 
 /** Domain-level error shape used inside the feature */

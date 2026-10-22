@@ -226,9 +226,11 @@ class TestChunkingService:
 
         chunks = ChunkingService.chunk_document_pages(pages=pages, filename="resume.pdf")
 
-        # 2700 / 650 step is ~4-5 chunks per page; two pages produce 8-10 chunks (typically 9)
-        assert len(chunks) == 9
-        assert pages[0].chunk_count + pages[1].chunk_count == 9
+        # 2700 / 650 step is ~4 chunks per page; two pages produce 8 chunks total (4 per page)
+        assert len(chunks) == 8
+        assert pages[0].chunk_count == 4
+        assert pages[1].chunk_count == 4
+        assert pages[0].chunk_count + pages[1].chunk_count == 8
 
         # Ensure all page 1 chunks have page_number == 1 and IDs matching resume_pdf_p1_c*
         for chunk in pages[0].chunks:

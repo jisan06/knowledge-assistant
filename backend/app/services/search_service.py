@@ -97,32 +97,37 @@ class SearchService:
                 idf = term_idf.get(t, 0.0)
                 if idf <= 0.0:
                     continue
-                # Whole-word or subword occurrence count
-                term_count = len(re.findall(r"\b" + re.escape(t), text_lower))
+                # Whole-word with common inflection boundary matching
+                term_count = len(re.findall(r"\b" + re.escape(t) + r"(?:s|es|ed|ing)?\b", text_lower))
                 if term_count > 0:
                     cand_score += idf * (1.0 + math.log(term_count))
             raw_scores[c.chunk_id] = cand_score
 
         max_score = max(raw_scores.values()) if raw_scores else 0.0
 
-        # 3. Linearly blend dense vector similarity (65%) and lexical score (35%)
         scored_candidates = []
-        for c in candidates:
-            vec_sim = c.similarity_score
-            norm_lex = (raw_scores.get(c.chunk_id, 0.0) / max_score) if max_score > 0.0 else 0.0
-            hybrid_sim = round(0.65 * vec_sim + 0.35 * norm_lex, 4)
-            hybrid_dist = max(0.0, round(1.0 - hybrid_sim, 4))
+        if max_score > 0.0:
+            # 3. Linearly blend dense vector similarity (65%) and normalized lexical score (35%)
+            for c in candidates:
+                vec_sim = c.similarity_score
+                norm_lex = raw_scores.get(c.chunk_id, 0.0) / max_score
+                hybrid_sim = round(0.65 * vec_sim + 0.35 * norm_lex, 4)
+                hybrid_dist = max(0.0, round(1.0 - hybrid_sim, 4))
 
-            updated_item = SearchResultItem(
-                chunk_id=c.chunk_id,
-                text=c.text,
-                filename=c.filename,
-                page_number=c.page_number,
-                chunk_index=c.chunk_index,
-                similarity_score=hybrid_sim,
-                distance=hybrid_dist,
-            )
-            scored_candidates.append(updated_item)
+                updated_item = SearchResultItem(
+                    chunk_id=c.chunk_id,
+                    text=c.text,
+                    filename=c.filename,
+                    page_number=c.page_number,
+                    chunk_index=c.chunk_index,
+                    similarity_score=hybrid_sim,
+                    distance=hybrid_dist,
+                )
+                scored_candidates.append(updated_item)
+        else:
+            # When no candidate matches any lexical term (pure dense query or unanswerable query),
+            # preserve original vector similarity without artificial attenuation penalty
+            scored_candidates = list(candidates)
 
         # Sort descending by hybrid similarity score
         scored_candidates.sort(key=lambda x: x.similarity_score, reverse=True)
@@ -205,6 +210,60 @@ class SearchService:
             chunks=valid_chunks,
             embeddings=embeddings,
         )
+
+    async def replace_document_chunks(
+        self,
+        filename: str,
+        chunks: List[DocumentChunk],
+    ) -> int:
+        """
+        Replaces all chunks for a document filename cleanly and atomically.
+        1. Embeds new chunks in memory first.
+        2. Backs up existing chunk records for filename in case replacement fails.
+        3. Deletes existing chunks for filename from the vector store so no stale chunks remain.
+        4. Upserts new chunks.
+        5. If upsert fails, restores the backed-up records to preserve a working previous version.
+        """
+        if not chunks:
+            return 0
+
+        valid_chunks = [c for c in chunks if c.text and c.text.strip()]
+        if not valid_chunks:
+            return 0
+
+        # Step 1: Embed new chunks BEFORE modifying vector store
+        needs_embedding = [c for c in valid_chunks if not c.embedding]
+        if needs_embedding:
+            await self.embedding_service.embed_chunks(needs_embedding)
+
+        embeddings = [c.embedding for c in valid_chunks if c.embedding is not None]
+        if len(embeddings) != len(valid_chunks):
+            raise RuntimeError("Mismatch between chunks and generated embeddings.")
+
+        # Step 2: Backup existing records for this filename
+        backup_records = self.vector_store.get_by_filename(filename)
+
+        # Step 3: Remove old chunks from vector store to prevent stale data
+        self.vector_store.delete_by_filename(filename)
+
+        # Step 4: Upsert new chunks, restoring backup if failure occurs
+        try:
+            return self.vector_store.upsert_chunks(
+                chunks=valid_chunks,
+                embeddings=embeddings,
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to upsert new chunks during document update for '{filename}': {e}. "
+                f"Restoring {len(backup_records)} backup record(s)."
+            )
+            if backup_records:
+                try:
+                    self.vector_store.restore_records(backup_records)
+                except Exception as restore_err:
+                    logger.error(f"Failed to restore backup chunks for '{filename}': {restore_err}")
+            raise
+
 
     async def index_document_pages(
         self,

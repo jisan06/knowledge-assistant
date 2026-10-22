@@ -157,6 +157,24 @@ class InMemoryVectorStore(BaseVectorStore):
 
         return len(to_delete)
 
+    def get_by_filename(self, filename: str) -> List[dict]:
+        """Returns copies of all records belonging to the specified document filename."""
+        return [
+            dict(rec) for rec in self._records.values()
+            if rec.get("filename") == filename
+        ]
+
+    def restore_records(self, records: List[dict]) -> None:
+        """Restores previously backed up chunk records."""
+        if not records:
+            return
+        for rec in records:
+            cid = rec.get("chunk_id")
+            if cid:
+                self._records[cid] = dict(rec)
+        self._save_to_disk()
+
+
     def clear(self) -> None:
         self._records.clear()
         if self.persist_path and os.path.exists(self.persist_path):

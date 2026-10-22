@@ -31,8 +31,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def init_db():
+    """Initializes all database tables registered on Base."""
+    Base.metadata.create_all(bind=engine)
+
+
 def get_db():
     """FastAPI dependency to provide a database session per request."""
+    init_db()
     db = SessionLocal()
     try:
         yield db

@@ -181,6 +181,75 @@ class ChromaVectorStore(BaseVectorStore):
         after = collection.count()
         return max(0, before - after)
 
+    def get_by_filename(self, filename: str) -> List[dict]:
+        """Returns copies of all records belonging to the specified document filename."""
+        collection = self._get_collection()
+        try:
+            res = collection.get(
+                where={"filename": filename},
+                include=["documents", "metadatas", "embeddings"],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch records for '{filename}' from Chroma: {e}")
+            return []
+
+        ids = res.get("ids") or []
+        docs = res.get("documents") or []
+        metas = res.get("metadatas") or []
+        embs = res.get("embeddings") or []
+
+        records = []
+        for i, cid in enumerate(ids):
+            doc = docs[i] if i < len(docs) else ""
+            meta = metas[i] if i < len(metas) else {}
+            emb = embs[i] if (embs is not None and i < len(embs)) else None
+            records.append({
+                "chunk_id": cid,
+                "text": doc,
+                "metadata": meta,
+                "embedding": emb,
+                "filename": filename,
+                "page_number": meta.get("page_number", 1) if isinstance(meta, dict) else 1,
+                "chunk_index": meta.get("chunk_index", 1) if isinstance(meta, dict) else 1,
+            })
+        return records
+
+    def restore_records(self, records: List[dict]) -> None:
+        """Restores previously backed up chunk records into Chroma collection."""
+        if not records:
+            return
+        collection = self._get_collection()
+        ids = []
+        docs = []
+        metas = []
+        vectors = []
+        has_any_vector = False
+        for r in records:
+            ids.append(r["chunk_id"])
+            docs.append(r.get("text", ""))
+            meta = r.get("metadata") or {
+                "filename": r.get("filename", ""),
+                "page_number": int(r.get("page_number", 1)),
+                "chunk_index": int(r.get("chunk_index", 1)),
+                "chunk_id": r["chunk_id"],
+            }
+            metas.append(meta)
+            emb = r.get("embedding")
+            vectors.append(emb)
+            if emb is not None:
+                has_any_vector = True
+
+        upsert_kwargs = {
+            "ids": ids,
+            "documents": docs,
+            "metadatas": metas,
+        }
+        if has_any_vector and all(v is not None for v in vectors):
+            upsert_kwargs["embeddings"] = vectors
+
+        collection.upsert(**upsert_kwargs)
+
+
     def clear(self) -> None:
         if self._client is not None:
             try:

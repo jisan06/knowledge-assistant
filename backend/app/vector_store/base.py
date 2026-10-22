@@ -59,6 +59,17 @@ class BaseVectorStore(ABC):
         pass
 
     @abstractmethod
+    def get_by_filename(self, filename: str) -> List[dict]:
+        """Returns copies of all records belonging to the specified document filename."""
+        pass
+
+    @abstractmethod
+    def restore_records(self, records: List[dict]) -> None:
+        """Restores previously backed up chunk records."""
+        pass
+
+    @abstractmethod
     def clear(self) -> None:
         """Clears all vectors from the collection."""
         pass
+

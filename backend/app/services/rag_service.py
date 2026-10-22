@@ -50,7 +50,7 @@ class RAGService:
             "=== END OF CONTEXT ===\n\n"
             "=== MANDATORY INSTRUCTIONS ===\n"
             "1. Base your answer strictly on the facts present in the RETRIEVED DOCUMENT CONTEXT above.\n"
-            "2. For every claim or key fact you state, include an exact citation citing the filename and page number, "
+            "2. For every claim or key fact you state, cite your source with an exact citation citing the filename and page number, "
             "for example: [Source: filename.pdf, Page 1] or (filename.pdf, p. 1).\n"
             "3. If the provided context does NOT contain enough information to answer the question, or if the question is "
             "unrelated to the context, clearly state: 'The uploaded documents do not provide enough information to answer this question.' "

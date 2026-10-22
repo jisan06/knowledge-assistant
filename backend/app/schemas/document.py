@@ -47,6 +47,9 @@ class DocumentUploadResponse(BaseModel):
     )
     indexed_chunks: int = Field(default=0, description="Number of chunks successfully indexed into the vector store")
     message: str = Field(..., description="Informative status message about extraction results")
+    is_duplicate: bool = Field(default=False, description="True if the uploaded document content already exists in the system")
+    is_updated: bool = Field(default=False, description="True if an existing document with the same filename was updated")
+    content_hash: Optional[str] = Field(default=None, description="SHA-256 hash of the uploaded document content")
 
 
 class ChunkPreviewRequest(BaseModel):

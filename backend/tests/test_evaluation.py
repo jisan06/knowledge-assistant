@@ -2,6 +2,8 @@ import json
 import os
 import pytest
 
+from app.schemas.search import SearchResultItem
+from app.services.search_service import SearchService
 from scripts.evaluate_rag import (
     calculate_recall_at_k,
     calculate_reciprocal_rank,
@@ -142,3 +144,132 @@ class TestEvaluationPipelineExecution:
         assert metrics["recall_at_k"] >= 70.0
         assert metrics["mrr"] > 0.5
         assert metrics["refusal_accuracy"] == 100.0
+
+        # Verify structured retrieval diagnostics are present on every question
+        for item in results["detailed_results"]:
+            assert "retrieval_diagnostics" in item
+            diags = item["retrieval_diagnostics"]
+            assert len(diags) > 0
+            for d in diags:
+                assert "rank" in d
+                assert "chunk_id" in d
+                assert "filename" in d
+                assert "page_number" in d
+                assert "chunk_index" in d
+                assert "similarity_score" in d
+                assert "distance" in d
+                assert "text" in d
+                assert "text_snippet" in d
+
+
+class TestRetrievalQualityRegression:
+    """
+    Regression tests validating retrieval precision, irrelevant query refusal,
+    cross-page retrieval coverage, citation grounding, and hybrid scoring.
+    """
+
+    @pytest.fixture
+    async def configured_evaluator(self):
+        evaluator = RAGEvaluator(
+            top_k=4,
+            use_mock_llm=True,
+            use_mock_embeddings=True,
+            store_type="memory",
+        )
+        await evaluator.index_document_from_pages("company_handbook.pdf", HANDBOOK_PAGES)
+        return evaluator
+
+    @pytest.mark.asyncio
+    async def test_relevant_retrieval_and_diagnostics_structure(self, configured_evaluator):
+        evaluator = configured_evaluator
+        # Direct query about password rotation (page 4)
+        query = "What are the minimum password length requirements and rotation interval?"
+        search_resp = await evaluator.search_service.search(query=query, top_k=4)
+
+        assert len(search_resp.results) > 0
+        top_chunk = search_resp.results[0]
+        # Target chunk must be from expected page 4
+        assert top_chunk.page_number == 4
+        assert "password" in top_chunk.text.lower()
+        assert top_chunk.chunk_id.startswith("company_handbook_pdf_p4")
+        assert top_chunk.similarity_score > 0.0
+        assert top_chunk.distance is not None
+
+    @pytest.mark.asyncio
+    async def test_multi_section_cross_page_retrieval(self, configured_evaluator):
+        evaluator = configured_evaluator
+        # Multi-section query requiring information from page 1 (office location) and page 4 (hardware laptop)
+        query = "What hardware laptop is issued to engineering staff and where is Acme's regional engineering center located?"
+        search_resp = await evaluator.search_service.search(query=query, top_k=4)
+
+        retrieved_pages = [c.page_number for c in search_resp.results]
+        # Both page 1 and page 4 must be captured in top-k
+        assert 1 in retrieved_pages
+        assert 4 in retrieved_pages
+        # Recall@4 should be True for expected [1, 4]
+        assert calculate_recall_at_k(retrieved_pages, [1, 4]) is True
+
+    @pytest.mark.asyncio
+    async def test_irrelevant_query_retrieval_and_refusal(self, configured_evaluator):
+        evaluator = configured_evaluator
+        irrelevant_questions = [
+            "Does Acme Cloud Technologies provide pet insurance discounts or pet bereavement leave?",
+            "What is the current stock strike price for employee incentive stock options (ISOs)?",
+            "Does the Seattle office cafeteria provide catered hot lunches and barista coffee?",
+        ]
+
+        for q in irrelevant_questions:
+            # Check retrieval behavior
+            search_resp = await evaluator.search_service.search(query=q, top_k=4)
+            assert len(search_resp.results) <= 4
+
+            # Check RAG refusal behavior
+            answer = await evaluator.rag_service.chat(q, top_k=4)
+            assert check_refusal_accuracy(answer) is True, f"Failed refusal for irrelevant query: {q}"
+            assert len(extract_cited_pages(answer)) == 0, f"Unanswerable question must not cite pages: {answer}"
+
+    @pytest.mark.asyncio
+    async def test_document_citation_grounding_regression(self, configured_evaluator):
+        evaluator = configured_evaluator
+        # Query: paid parental leave (page 3)
+        query = "How many weeks of paid parental leave does Acme provide and what is the tenure eligibility requirement?"
+        answer = await evaluator.rag_service.chat(query, top_k=4)
+
+        cited_pages = extract_cited_pages(answer)
+        assert len(cited_pages) > 0, "Grounded answer must include citations"
+        assert 3 in cited_pages, "Citations must include expected page 3"
+        assert check_citation_correctness(answer, expected_pages=[3]) is True
+
+    def test_hybrid_reranking_preserves_vector_similarity_when_no_lexical_match(self):
+        candidates = [
+            SearchResultItem(
+                chunk_id="doc_p1_c1",
+                text="Acme Cloud Technologies overview and hybrid workplace schedule.",
+                filename="doc.pdf",
+                page_number=1,
+                chunk_index=1,
+                similarity_score=0.75,
+                distance=0.25,
+            ),
+            SearchResultItem(
+                chunk_id="doc_p2_c1",
+                text="Compensation, payroll cycles, and 401k benefits.",
+                filename="doc.pdf",
+                page_number=2,
+                chunk_index=1,
+                similarity_score=0.60,
+                distance=0.40,
+            ),
+        ]
+
+        # Query with content terms that do not appear lexically in any candidate
+        query = "zenith quantum robotics astrophysics"
+        reranked = SearchService._apply_hybrid_reranking(query=query, candidates=candidates, top_k=2)
+
+        assert len(reranked) == 2
+        # Original vector similarity should be preserved (NOT multiplied by 0.65)
+        assert reranked[0].chunk_id == "doc_p1_c1"
+        assert reranked[0].similarity_score == 0.75
+        assert reranked[1].chunk_id == "doc_p2_c1"
+        assert reranked[1].similarity_score == 0.60
+
