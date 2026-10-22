@@ -77,6 +77,25 @@ class EmbeddingService:
             logger.exception("Unexpected error while generating text embedding")
             raise EmbeddingServiceError(f"Embedding generation failed: {e}") from e
 
+    async def embed_query(self, query: str) -> List[float]:
+        """
+        Embeds a user search query, applying model-specific query instructions or prefixes.
+        Raises EmptyChunkError if query is empty or whitespace-only.
+        """
+        if not query or not query.strip():
+            raise EmptyChunkError("Cannot generate embedding for empty or whitespace-only query.")
+
+        try:
+            return await self.provider.embed_query(query.strip())
+        except ValueError as e:
+            raise EmptyChunkError(str(e)) from e
+        except RuntimeError as e:
+            raise EmbeddingModelLoadError(str(e)) from e
+        except Exception as e:
+            logger.exception("Unexpected error while generating query embedding")
+            raise EmbeddingServiceError(f"Query embedding generation failed: {e}") from e
+
+
     async def embed_chunk(self, chunk: DocumentChunk) -> ChunkEmbeddingResult:
         """
         Generates an embedding vector for a single DocumentChunk.

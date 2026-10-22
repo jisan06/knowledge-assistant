@@ -33,3 +33,11 @@ class BaseEmbeddingProvider(ABC):
         Embeds a batch of strings into a list of float vectors.
         """
         pass
+
+    async def embed_query(self, query: str) -> List[float]:
+        """
+        Embeds a single query string for semantic retrieval.
+        Default implementation delegates to embed_text.
+        """
+        return await self.embed_text(query)
+

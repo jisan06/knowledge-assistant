@@ -33,6 +33,7 @@ export interface DocumentUploadResponse {
   pages: DocumentPage[];
   total_chunks?: number;
   chunks?: DocumentChunk[];
+  indexed_chunks?: number;
   message: string;
 }
 

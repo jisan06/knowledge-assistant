@@ -45,6 +45,7 @@ class DocumentUploadResponse(BaseModel):
         default_factory=list,
         description="Flattened list of all chunks across all pages",
     )
+    indexed_chunks: int = Field(default=0, description="Number of chunks successfully indexed into the vector store")
     message: str = Field(..., description="Informative status message about extraction results")
 
 

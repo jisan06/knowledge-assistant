@@ -32,7 +32,18 @@ class MockGroundedAIProvider(AIProvider):
                     "Alice has 7 years of experience in Python and building scalable FastAPI microservices "
                     "[Source: resume.pdf, Page 1]."
                 )
-            elif "sourdough bread" in message or "chocolate cake" in message:
+            elif "reference" in message.lower() and "person" in message.lower():
+                # Grounded answer: strictly verify whether reference chunk was retrieved in context
+                if "Ismail Jabiullah" in message:
+                    return (
+                        "Professor Dr. Md. Ismail Jabiullah is listed as a reference in the document "
+                        "[Source: Jesan_resume_with_cover_letter.pdf, Page 4]."
+                    )
+                return (
+                    "The uploaded documents do not provide enough information to answer this question. "
+                    "Please provide a specific question related to the provided document context."
+                )
+            elif any(q in message.lower() for q in ["sourdough bread", "chocolate cake", "favorite pet", "dog name", "cat name"]):
                 # Following instruction 3: admit when context doesn't contain the answer
                 return "The uploaded documents do not provide enough information to answer this question."
             else:
@@ -46,6 +57,126 @@ class MockGroundedAIProvider(AIProvider):
         words = full_text.split(" ")
         for i, word in enumerate(words):
             yield word + (" " if i < len(words) - 1 else "")
+
+
+# 8 extracted chunks from Jesan_resume_with_cover_letter.pdf
+JESAN_RESUME_CHUNKS = [
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p1_c1",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=1,
+        chunk_index=1,
+        text=(
+            "November 20, 2024 \nHiring Manager \nBdtask Limited \nSubject: Senior PHP Developer \n"
+            "Hi There, \nWith over 5.6 years of development experience and a diverse skill set, "
+            "I am well -prepared to make a significant contribution to your company's operations. "
+            "My expertise encompasses handling real -time, large, complex projects in both client-based "
+            "and product-based development. \nI excel at managing intricate projects and am equally "
+            "comfortable assuming leadership responsibilities within a team."
+        ),
+        char_count=521,
+    ),
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p1_c2",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=1,
+        chunk_index=2,
+        text=(
+            "learning opportunities, and knowledge sharing within your esteemed company. \n"
+            "Currently, I serve as a Senior Software Engineer at WPXPO, where I have experience in both "
+            "backend and frontend development. \nThank you for taking the time to review my credentials "
+            "and accomplishments. I look forward to speaking with you about this opportunity. \n"
+            "Best Regards, \nJesan Ahmad"
+        ),
+        char_count=398,
+    ),
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p2_c1",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=2,
+        chunk_index=1,
+        text=(
+            "JESAN AHMAD \nAddress: Garden Street, Shyamoli, Dhaka \nMobile No: 01832967276 \n"
+            "E-mail: jisanahmed06@gmail.com \nCareer Objective \nAn innovative individual trying to achieve "
+            "top-level skills, inventing creative ideas, and new feature development. \n"
+            "Employment History \nTotal Time of Experience: 5.6 Years \n1. Sr. Software Engineer \n"
+            "Duration : January 2022 – Present \nDepartment : IT \nCompany Name : WPXPO \n"
+            "Company Location : House: #1/C, Road -1, Shyamoli, Mohammadpur, Dhaka"
+        ),
+        char_count=493,
+    ),
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p2_c2",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=2,
+        chunk_index=2,
+        text=(
+            "Responsibilities : Lead the product team, Requirement analysis, Planning, Architecture design. \n"
+            "2. Software Engineer \nDuration : December 1, 2020 – December 30, 2021 \nDepartment : IT \n"
+            "Company Name : Perky Rabbit \nCompany Location : House: #19, Road -16, DIT Project, Merul Badda, Dhaka \n"
+            "3. Assistant Programmer \nDuration : March 2, 2019 – November 30, 2020 \nDepartment : IT \n"
+            "Company Name : Techno Park Bangladesh"
+        ),
+        char_count=442,
+    ),
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p2_c3",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=2,
+        chunk_index=3,
+        text=(
+            "Assistant Programmer \nDuration : March 2, 2019 – November 30, 2020 \nDepartment : IT \n"
+            "Company Name : Techno Park Bangladesh \nCompany Location : House: #23, Road -09, DIT Project, Merul Badda, Dhaka \n"
+            "Responsibilities : Customize import management, Create e-commerce website, Simple website"
+        ),
+        char_count=297,
+    ),
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p3_c1",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=3,
+        chunk_index=1,
+        text=(
+            "Skills \nLanguages: PHP, HTML, CSS, JavaScript, SQL \nDatabases: MySQL, MongoDB, MariaDB \n"
+            "Frameworks: Laravel, Codeigniter, CakePHP, Node.js, Vue.js, React.js, WordPress \n"
+            "Education \nBachelor of Science (BSc) in Computer Science & Engineering \nPassing Year : 2018 \n"
+            "Result : 3.48 (out of 4.00) \nInstitute : Hamdard University Bangladesh"
+        ),
+        char_count=361,
+    ),
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p3_c2",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=3,
+        chunk_index=2,
+        text=(
+            "Training Summary \nTitle : Certified Web Development Specialist \n"
+            "Topics : HTML5, CSS3, Bootstrap, JavaScript, JQuery, Ajax, PHP, MySQL \n"
+            "Duration : 6 Month \nInstitute : BITM \nYear : 2017"
+        ),
+        char_count=208,
+    ),
+    DocumentChunk(
+        chunk_id="Jesan_resume_with_cover_letter_pdf_p4_c1",
+        filename="Jesan_resume_with_cover_letter.pdf",
+        page_number=4,
+        chunk_index=1,
+        text=(
+            "Reference \nProfessor Dr. Md. Ismail Jabiullah \n"
+            "    Professor, Department of Computer Science and Engineering \n"
+            "    Daffodil International University \n \n"
+            "Personal Information \nDate of Birth : 06 December 1995 \n"
+            "Permanent address : Ghasirchar, Ananda Bazar, Matlab Uttar, Chandpur-3640 \n"
+            "Marital Status : Unmarried \nNationality : Bangladeshi \n \n"
+            "Some of My Work \nhttps://www.knowwear.shop/en/home \nhttps://wordpress.org/plugins/ultimate-post/ \n"
+            "https://wordpress.org/plugins/product-blocks/ \nhttps://enoc.fireservice.gov.bd/login \n"
+            "https://fsc.fireservice.gov.bd/ \nhttps://elicense.fireservice.gov.bd/ \n"
+            "http://fscws.viewdemo.xyz/login  \nhttps://asgardstore.com/en \nhttp://banglacar.net/"
+        ),
+        char_count=716,
+    ),
+]
+
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +299,110 @@ class TestRAGServiceUnit:
         # Verify no fabricated citations
         assert "Page 1" not in answer
 
+    @pytest.mark.asyncio
+    async def test_reference_person_semantic_retrieval_and_logging(self):
+        """
+        Task 3: Tests semantic retrieval for 'Which person's name is listed as a reference in the document?'.
+        Logs the retrieved chunk text, filename, page number, chunk ID, and similarity/distance score.
+        Verifies that page 4 reference chunk is successfully retrieved in top results.
+        """
+        memory_store = InMemoryVectorStore(collection_name="test_resume_retrieval")
+        mock_embedding = EmbeddingService(provider=MockEmbeddingProvider(dimension=384))
+        search_service = SearchService(embedding_service=mock_embedding, vector_store=memory_store)
+
+        # Index all 8 chunks of the user's resume
+        await search_service.index_chunks(JESAN_RESUME_CHUNKS)
+
+        query = "Which person's name is listed as a reference in the document?"
+        search_resp = await search_service.search(query=query, top_k=4)
+
+        print("\n--- [Semantic Retrieval Results for Reference Question] ---")
+        retrieved_ids = []
+        for rank, item in enumerate(search_resp.results, start=1):
+            retrieved_ids.append(item.chunk_id)
+            print(
+                f"Rank {rank}: Chunk ID: {item.chunk_id} | "
+                f"File: {item.filename} | Page: {item.page_number} | "
+                f"Similarity: {item.similarity_score} | Distance: {item.distance}\n"
+                f"Text: {item.text[:100]}...\n"
+            )
+
+        # Confirm all 8 chunks are in the store
+        assert search_service.vector_store.count() == 8
+
+        # Confirm page 4 reference chunk is retrieved in the top results
+        assert "Jesan_resume_with_cover_letter_pdf_p4_c1" in retrieved_ids
+        p4_item = next(
+            item for item in search_resp.results
+            if item.chunk_id == "Jesan_resume_with_cover_letter_pdf_p4_c1"
+        )
+        assert p4_item.page_number == 4
+        assert "Professor Dr. Md. Ismail Jabiullah" in p4_item.text
+        assert "Reference" in p4_item.text
+
+    @pytest.mark.asyncio
+    async def test_reference_person_query_retrieval_and_grounded_answer(self):
+        """
+        Task 7 Regression Test: Verifies that 'Which person's name is listed as a reference in the document?'
+        returns 'Professor Dr. Md. Ismail Jabiullah' with an exact citation to page 4.
+        """
+        memory_store = InMemoryVectorStore(collection_name="test_resume_rag")
+        mock_embedding = EmbeddingService(provider=MockEmbeddingProvider(dimension=384))
+        search_service = SearchService(embedding_service=mock_embedding, vector_store=memory_store)
+
+        await search_service.index_chunks(JESAN_RESUME_CHUNKS)
+
+        ai_service = AIService()
+        ai_service.provider = MockGroundedAIProvider()
+        rag_service = RAGService(search_service=search_service, ai_service=ai_service)
+
+        query = "Which person's name is listed as a reference in the document?"
+        answer = await rag_service.chat(query)
+
+        # Must return the expected reference person
+        assert "Professor Dr. Md. Ismail Jabiullah" in answer
+        # Must cite page 4
+        assert "Page 4" in answer or "p. 4" in answer
+        assert "Jesan_resume_with_cover_letter.pdf" in answer
+
+    @pytest.mark.asyncio
+    async def test_genuinely_unanswerable_question_on_resume_refuses(self):
+        """
+        Task 8: Verifies that genuinely unanswerable questions on the resume
+        strictly trigger refusal and do not fabricate facts or citations.
+        """
+        memory_store = InMemoryVectorStore(collection_name="test_resume_unanswerable")
+        mock_embedding = EmbeddingService(provider=MockEmbeddingProvider(dimension=384))
+        search_service = SearchService(embedding_service=mock_embedding, vector_store=memory_store)
+
+        await search_service.index_chunks(JESAN_RESUME_CHUNKS)
+
+        ai_service = AIService()
+        ai_service.provider = MockGroundedAIProvider()
+        rag_service = RAGService(search_service=search_service, ai_service=ai_service)
+
+        answer = await rag_service.chat("What is Jesan's favorite pet or dog name?")
+        assert "do not provide enough information" in answer.lower()
+        # Must not fabricate page 4 citation for unanswerable question
+        assert "Page 4" not in answer
+
+    @pytest.mark.asyncio
+    async def test_missing_documents_notice_for_reference_query(self):
+        """
+        Task 8: Verifies that asking the reference query with zero indexed documents
+        returns the clear missing documents guidance message upfront without calling LLM.
+        """
+        empty_store = InMemoryVectorStore(collection_name="test_empty_resume_store")
+        mock_embedding = EmbeddingService(provider=MockEmbeddingProvider(dimension=384))
+        search_service = SearchService(embedding_service=mock_embedding, vector_store=empty_store)
+
+        rag_service = RAGService(search_service=search_service)
+
+        answer = await rag_service.chat("Which person's name is listed as a reference in the document?")
+        assert "no indexed documents" in answer.lower()
+        assert "upload a pdf" in answer.lower()
+
+
 
 # ---------------------------------------------------------------------------
 # Integration Tests: Chat Endpoints with RAG Mode Enabled and Disabled
@@ -202,6 +437,9 @@ class TestChatRAGIntegration:
 
     def test_rag_enabled_empty_documents_notice(self, monkeypatch):
         # Empty collection
+        from app.vector_store.factory import get_vector_store
+        get_vector_store().clear()
+
         conv_resp = client.post("/api/conversations", json={"title": "RAG Test"})
         conv_id = conv_resp.json()["id"]
 
@@ -302,3 +540,55 @@ class TestChatRAGIntegration:
         assert len(res_data["sources"]) >= 1
         assert res_data["sources"][0]["filename"] == "spec.pdf"
         assert res_data["sources"][0]["page_number"] == 2
+
+    def test_rag_streaming_resume_reference_query(self, monkeypatch):
+        """
+        Task 7 & 8: End-to-end streaming test for 'Which person's name is listed as a reference in the document?'
+        Verifies that streaming yields Professor Dr. Md. Ismail Jabiullah with source citation to page 4.
+        """
+        # 1. Index all 8 chunks of Jesan's resume
+        chunks_payload = {
+            "chunks": [c.model_dump() for c in JESAN_RESUME_CHUNKS]
+        }
+        idx_res = client.post("/api/documents/index-chunks", json=chunks_payload)
+        assert idx_res.status_code == 200
+
+        # 2. Mock AIService provider with MockGroundedAIProvider
+        from app.routes import conversations as conv_module
+        monkeypatch.setattr(conv_module.rag_service.ai_service, "provider", MockGroundedAIProvider())
+
+        # 3. Create conversation and stream message with use_rag=True
+        conv_resp = client.post("/api/conversations", json={"title": "Resume Reference Stream Test"})
+        conv_id = conv_resp.json()["id"]
+
+        with client.stream(
+            "POST",
+            f"/api/conversations/{conv_id}/messages/stream",
+            json={
+                "message": "Which person's name is listed as a reference in the document?",
+                "use_rag": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            events = response.iter_lines()
+            full_reply = ""
+            for line in events:
+                if line.startswith("data: "):
+                    try:
+                        data = json.loads(line[6:])
+                        if "chunk" in data:
+                            full_reply += data["chunk"]
+                    except json.JSONDecodeError:
+                        pass
+
+            assert "Professor Dr. Md. Ismail Jabiullah" in full_reply
+            assert "[Source: Jesan_resume_with_cover_letter.pdf, Page 4]" in full_reply
+
+        # 4. Verify conversation history was persisted
+        history = client.get(f"/api/conversations/{conv_id}/messages").json()
+        assert len(history) == 2
+        assert history[0]["role"] == "user"
+        assert history[1]["role"] == "assistant"
+        assert "Professor Dr. Md. Ismail Jabiullah" in history[1]["content"]
+        assert "Page 4" in history[1]["content"]
+

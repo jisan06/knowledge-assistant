@@ -1,5 +1,7 @@
 import logging
-from typing import List, Optional
+import math
+import re
+from typing import List, Optional, Set
 
 from app.config import settings
 from app.schemas.document import DocumentChunk, DocumentPage
@@ -17,15 +19,27 @@ from app.vector_store.factory import get_vector_store
 
 logger = logging.getLogger(__name__)
 
+# Stopwords and meta-query boilerplate ignored during lexical relevance weighting
+SEARCH_STOPWORDS: Set[str] = {
+    "a", "about", "after", "all", "an", "and", "are", "as", "at", "be",
+    "been", "by", "can", "could", "do", "does", "for", "from", "had",
+    "has", "have", "how", "if", "in", "into", "is", "it", "of", "on",
+    "or", "our", "out", "over", "so", "that", "the", "their", "there",
+    "this", "to", "up", "was", "were", "what", "when", "where", "which",
+    "who", "whom", "why", "will", "with", "would",
+    "document", "documents", "pdf", "page", "pages", "file", "listed",
+    "tell", "please", "stated", "mentioned", "give", "show", "provide",
+}
+
 
 class SearchService:
     """
     Orchestration service for semantic search and document vector indexing.
 
     Responsibilities:
-    - Embedding query text using the same model as document chunks.
-    - Retrieving top-k relevant chunks by vector cosine similarity.
-    - Indexing and updating document chunks with deduplication via stable chunk IDs.
+    - Embedding query text using query-specific instruction/model.
+    - Retrieving candidates and applying hybrid dense-lexical scoring.
+    - Preserving stable chunk IDs and deduplicating entries.
     - Handling empty queries, empty collections, and error states gracefully.
     """
 
@@ -37,6 +51,83 @@ class SearchService:
         self.embedding_service = embedding_service or EmbeddingService()
         self.vector_store = vector_store or get_vector_store()
 
+    @staticmethod
+    def _apply_hybrid_reranking(
+        query: str,
+        candidates: List[SearchResultItem],
+        top_k: int,
+    ) -> List[SearchResultItem]:
+        """
+        Combines dense vector similarity with BM25-like lexical relevance scores.
+        Ensures high-discriminative query terms (e.g. 'reference') match their exact chunk
+        even when embeddings are diluted by long lists or URLs.
+        """
+        if not candidates or top_k <= 0:
+            return []
+
+        # Extract content words from query
+        raw_words = re.findall(r"[a-z0-9]+", query.lower())
+        query_terms = [w for w in raw_words if w not in SEARCH_STOPWORDS and len(w) >= 2]
+
+        if not query_terms or len(candidates) <= 1:
+            return candidates[:top_k]
+
+        total_candidates = len(candidates)
+
+        # 1. Calculate Document Frequency (DF) and Inverse Document Frequency (IDF) for each query term
+        term_df = {}
+        for t in query_terms:
+            df = sum(1 for c in candidates if t in c.text.lower())
+            term_df[t] = df
+
+        term_idf = {}
+        for t, df in term_df.items():
+            if df > 0:
+                # Standard smoothed BM25 IDF formulation
+                term_idf[t] = math.log(1.0 + (total_candidates - df + 0.5) / (df + 0.5))
+            else:
+                term_idf[t] = 0.0
+
+        # 2. Score each candidate by term match frequency weighted by IDF
+        raw_scores = {}
+        for c in candidates:
+            text_lower = c.text.lower()
+            cand_score = 0.0
+            for t in query_terms:
+                idf = term_idf.get(t, 0.0)
+                if idf <= 0.0:
+                    continue
+                # Whole-word or subword occurrence count
+                term_count = len(re.findall(r"\b" + re.escape(t), text_lower))
+                if term_count > 0:
+                    cand_score += idf * (1.0 + math.log(term_count))
+            raw_scores[c.chunk_id] = cand_score
+
+        max_score = max(raw_scores.values()) if raw_scores else 0.0
+
+        # 3. Linearly blend dense vector similarity (65%) and lexical score (35%)
+        scored_candidates = []
+        for c in candidates:
+            vec_sim = c.similarity_score
+            norm_lex = (raw_scores.get(c.chunk_id, 0.0) / max_score) if max_score > 0.0 else 0.0
+            hybrid_sim = round(0.65 * vec_sim + 0.35 * norm_lex, 4)
+            hybrid_dist = max(0.0, round(1.0 - hybrid_sim, 4))
+
+            updated_item = SearchResultItem(
+                chunk_id=c.chunk_id,
+                text=c.text,
+                filename=c.filename,
+                page_number=c.page_number,
+                chunk_index=c.chunk_index,
+                similarity_score=hybrid_sim,
+                distance=hybrid_dist,
+            )
+            scored_candidates.append(updated_item)
+
+        # Sort descending by hybrid similarity score
+        scored_candidates.sort(key=lambda x: x.similarity_score, reverse=True)
+        return scored_candidates[:top_k]
+
     async def search(
         self,
         query: str,
@@ -44,10 +135,11 @@ class SearchService:
         filter_filename: Optional[str] = None,
     ) -> SearchResponse:
         """
-        Performs semantic vector search for a user text query.
+        Performs hybrid semantic search for a user text query.
         1. Validates non-emptiness of query.
-        2. Embeds the query into a float vector using the configured embedding model.
-        3. Retrieves the top_k most similar document chunks.
+        2. Embeds the query into a float vector using query-specific instruction/model.
+        3. Retrieves top candidates from vector store and applies hybrid dense-lexical scoring.
+        4. Returns the top_k most relevant document chunks.
         """
         clean_query = (query or "").strip()
         if not clean_query:
@@ -64,14 +156,19 @@ class SearchService:
                 model=self.embedding_service.model_name,
             )
 
-        # Generate query vector with the identical embedding model used for indexing
-        query_vector = await self.embedding_service.embed_text(clean_query)
+        # Generate query vector with query-specific representation
+        query_vector = await self.embedding_service.embed_query(clean_query)
 
-        results: List[SearchResultItem] = self.vector_store.search(
+        # Retrieve a broader candidate pool to enable hybrid reranking
+        candidate_k = max(k * 3, 12)
+        candidates: List[SearchResultItem] = self.vector_store.search(
             query_vector=query_vector,
-            top_k=k,
+            top_k=candidate_k,
             filter_filename=filter_filename,
         )
+
+        # Apply hybrid dense-lexical reranking to accurately prioritize specific terms
+        results = self._apply_hybrid_reranking(clean_query, candidates, top_k=k)
 
         return SearchResponse(
             query=clean_query,
@@ -79,6 +176,7 @@ class SearchService:
             results=results,
             model=self.embedding_service.model_name,
         )
+
 
     async def index_chunks(self, chunks: List[DocumentChunk]) -> int:
         """

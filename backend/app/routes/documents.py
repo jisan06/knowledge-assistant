@@ -50,11 +50,12 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 async def upload_document(
     file: UploadFile = File(..., description="PDF document to parse and extract"),
     embed: bool = False,
-    index: bool = False,
+    index: bool = Query(default=True, description="Automatically generate embeddings and index chunks into vector store"),
 ):
     """
     Accepts a single PDF file, validates format and size limits, and extracts
-    text page-by-page in memory. If embed=True, generates embeddings for all chunks.
+    text page-by-page in memory. Automatically generates embeddings and indexes
+    chunks into vector storage by default (index=True) for immediate RAG retrieval.
     """
     # Quick client-provided metadata validation
     filename = file.filename or ""
@@ -96,7 +97,13 @@ async def upload_document(
 
         if index and result.has_extractable_text and result.chunks:
             search_service = SearchService()
-            await search_service.index_chunks(result.chunks)
+            indexed_count = await search_service.index_chunks(result.chunks)
+            result.indexed_chunks = indexed_count
+            result.message = (
+                f"Successfully extracted text from {result.total_pages} page(s) "
+                f"({result.total_characters} characters, {len(result.chunks)} chunks) "
+                f"and indexed {indexed_count} chunk(s) into the knowledge base."
+            )
         elif embed and result.has_extractable_text and result.chunks:
             embedding_service = EmbeddingService()
             await embedding_service.embed_chunks(result.chunks)

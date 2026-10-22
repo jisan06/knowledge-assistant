@@ -167,5 +167,6 @@ class PDFService:
             pages=pages,
             total_chunks=total_chunks,
             chunks=chunks,
+            indexed_chunks=0,
             message=message,
         )

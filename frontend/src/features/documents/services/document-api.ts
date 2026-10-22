@@ -17,13 +17,13 @@ class DocumentApiService {
    * The Content-Type header and multipart boundary are generated
    * automatically by fetch — we must NOT set it manually.
    */
-  async uploadPdf(file: File): Promise<DocumentUploadResponse> {
+  async uploadPdf(file: File, index: boolean = true): Promise<DocumentUploadResponse> {
     const formData = new FormData();
     formData.append('file', file);
 
     let response: Response;
     try {
-      response = await fetch(`${this.cleanBaseUrl}/api/documents/upload`, {
+      response = await fetch(`${this.cleanBaseUrl}/api/documents/upload?index=${index}`, {
         method: 'POST',
         // No Content-Type header — fetch generates the correct multipart boundary
         body: formData,

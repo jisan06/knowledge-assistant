@@ -53,6 +53,22 @@ class TestMockEmbeddingProvider:
         with pytest.raises(ValueError, match="empty text"):
             await provider.embed_text("   \n\t  ")
 
+    @pytest.mark.asyncio
+    async def test_semantic_similarity_ranking(self):
+        """Verifies that semantically related texts produce higher cosine similarity than unrelated texts."""
+        provider = MockEmbeddingProvider()
+        query = await provider.embed_text("vacation days and paid time off accrual")
+        related = await provider.embed_text("Full-time employees accrue 20 vacation days of paid time off.")
+        unrelated = await provider.embed_text("Hardware laptops are Apple MacBook Pro 16-inch workstations.")
+
+        def dot_product(v1, v2):
+            return sum(a * b for a, b in zip(v1, v2))
+
+        sim_related = dot_product(query, related)
+        sim_unrelated = dot_product(query, unrelated)
+        assert sim_related > sim_unrelated
+        assert sim_related > 0.3
+
 
 class TestEmbeddingService:
     """Unit tests for the EmbeddingService layer."""

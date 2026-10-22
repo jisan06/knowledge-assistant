@@ -4,10 +4,21 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from main import app
+from app.config import settings
 from app.services.pdf_service import PDFService, FileTooLargeError, EmptyFileError, InvalidPDFError
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def use_mock_provider(monkeypatch):
+    """Ensure fast, deterministic vector store tests without downloading external weights."""
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "mock")
+    from app.vector_store.factory import get_vector_store
+    store = get_vector_store()
+    yield
+    store.clear()
 
 
 def generate_text_pdf(text: str = "Knowledge Assistant Test Document") -> bytes:
@@ -84,6 +95,8 @@ def test_upload_valid_text_pdf():
     assert data["chunks"][0]["chunk_id"] == "sample_pdf_p1_c1"
     assert data["chunks"][0]["page_number"] == 1
     assert data["chunks"][0]["filename"] == "sample.pdf"
+    assert data["indexed_chunks"] == 1
+    assert "indexed" in data["message"].lower()
 
     page = data["pages"][0]
     assert page["page_number"] == 1
@@ -107,10 +120,72 @@ def test_upload_blank_or_image_pdf():
     assert data["total_pages"] == 1
     assert data["has_extractable_text"] is False
     assert data["total_characters"] == 0
+    assert data["indexed_chunks"] == 0
     assert len(data["pages"]) == 1
     assert data["pages"][0]["page_number"] == 1
     assert data["pages"][0]["text"] == ""
     assert "no extractable text" in data["message"].lower()
+
+
+def test_upload_with_explicit_index_false():
+    """Verifies that passing index=false extracts text without indexing into the vector store."""
+    pdf_bytes = generate_text_pdf("Extraction only content without vector storage")
+    response = client.post(
+        "/api/documents/upload?index=false",
+        files={"file": ("extract_only.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_extractable_text"] is True
+    assert data["indexed_chunks"] == 0
+    assert "indexed" not in data["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_full_flow_upload_pdf_index_and_rag_retrieval():
+    """
+    Verifies the complete flow required by the knowledge assistant:
+    1. Upload PDF to /api/documents/upload.
+    2. Verify chunks are extracted AND automatically stored in the vector store.
+    3. Retrieve the chunk through the identical RAGService used by the chat endpoint.
+    4. Confirm grounding text, source filename, and page number match.
+    """
+    from app.services.rag_service import RAGService
+    from app.vector_store.factory import get_vector_store
+
+    resume_text = (
+        "Jesan is an accomplished Lead Software Architect with extensive experience in "
+        "Python, FastAPI microservices, and React Next.js distributed architectures."
+    )
+    pdf_bytes = generate_text_pdf(resume_text)
+
+    response = client.post(
+        "/api/documents/upload",
+        files={"file": ("Jesan_resume_with_cover_letter.pdf", pdf_bytes, "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["filename"] == "Jesan_resume_with_cover_letter.pdf"
+    assert data["has_extractable_text"] is True
+    assert data["indexed_chunks"] >= 1
+    assert "indexed" in data["message"].lower()
+
+    # Verify vector store holds the newly indexed chunks
+    store = get_vector_store()
+    assert store.count() >= 1
+
+    # Verify that the same RAGService used by chat retrieves the indexed document
+    rag_service = RAGService()
+    assert rag_service.search_service.vector_store.count() >= 1
+
+    retrieved = await rag_service.retrieve_context("What is Jesan's architecture experience?", top_k=2)
+    assert len(retrieved) >= 1
+    top_chunk = retrieved[0]
+    assert top_chunk.filename == "Jesan_resume_with_cover_letter.pdf"
+    assert top_chunk.page_number == 1
+    assert "FastAPI" in top_chunk.text
+    assert top_chunk.similarity_score > 0.0
 
 
 def test_upload_non_pdf_extension_rejected():

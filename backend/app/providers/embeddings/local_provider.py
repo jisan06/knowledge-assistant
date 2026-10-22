@@ -42,6 +42,7 @@ class LocalEmbeddingProvider(BaseEmbeddingProvider):
         if self._model is not None:
             return self._model
 
+        fastembed_import_err: Optional[Exception] = None
         # Attempt 1: FastEmbed (Recommended lightweight ONNX runtime)
         try:
             from fastembed import TextEmbedding
@@ -49,13 +50,14 @@ class LocalEmbeddingProvider(BaseEmbeddingProvider):
             self._model = TextEmbedding(model_name=self._model_name)
             self._backend_type = "fastembed"
             return self._model
-        except ImportError:
-            pass
+        except ImportError as e:
+            fastembed_import_err = e
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load FastEmbed model '{self._model_name}': {e}"
             ) from e
 
+        sentence_tx_import_err: Optional[Exception] = None
         # Attempt 2: Sentence-Transformers fallback
         try:
             from sentence_transformers import SentenceTransformer
@@ -63,21 +65,28 @@ class LocalEmbeddingProvider(BaseEmbeddingProvider):
             self._model = SentenceTransformer(self._model_name)
             self._backend_type = "sentence_transformers"
             return self._model
-        except ImportError:
-            pass
+        except ImportError as e:
+            sentence_tx_import_err = e
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load SentenceTransformer model '{self._model_name}': {e}"
             ) from e
 
         # Neither library is available
-        raise RuntimeError(
-            "No local embedding library is installed in the current environment.\n"
-            "To enable local embeddings, install fastembed by running:\n"
-            "    pip install fastembed\n"
-            "Or install sentence-transformers:\n"
-            "    pip install sentence-transformers"
-        )
+        diagnostic_lines = [
+            "No local embedding library is installed in the current environment.",
+            "The project is configured to use 'fastembed' (or 'sentence-transformers').",
+            "To install the required dependencies in your active virtual environment, run:",
+            "    pip install -r requirements.txt",
+            "or:",
+            "    pip install fastembed",
+        ]
+        if fastembed_import_err:
+            diagnostic_lines.append(f"\n[Diagnostic] fastembed import error: {fastembed_import_err}")
+        if sentence_tx_import_err:
+            diagnostic_lines.append(f"[Diagnostic] sentence-transformers import error: {sentence_tx_import_err}")
+
+        raise RuntimeError("\n".join(diagnostic_lines))
 
     async def embed_text(self, text: str) -> List[float]:
         """Embeds a single text string."""
@@ -109,3 +118,33 @@ class LocalEmbeddingProvider(BaseEmbeddingProvider):
                 raise RuntimeError(f"Unknown embedding backend: {self._backend_type}")
 
         return await asyncio.to_thread(_sync_embed)
+
+    async def embed_query(self, query: str) -> List[float]:
+        """
+        Embeds a single query text using query-specific instruction/prefix when supported by the backend.
+        For BGE models in FastEmbed, calls query_embed().
+        For sentence-transformers, prepends 'Represent this sentence for searching relevant passages: '.
+        """
+        if not query or not query.strip():
+            raise ValueError("Cannot generate embedding for empty query.")
+
+        cleaned = query.strip()
+
+        def _sync_embed_query() -> List[float]:
+            model = self._load_model()
+            if self._backend_type == "fastembed":
+                if hasattr(model, "query_embed"):
+                    embeddings_gen = model.query_embed([cleaned])
+                    return list(embeddings_gen)[0].tolist()
+                embeddings_gen = model.embed([cleaned])
+                return list(embeddings_gen)[0].tolist()
+            elif self._backend_type == "sentence_transformers":
+                prefix = "Represent this sentence for searching relevant passages: "
+                prompt = (prefix + cleaned) if "bge" in self._model_name.lower() else cleaned
+                embeddings_arr = model.encode(prompt, convert_to_numpy=True)
+                return embeddings_arr.tolist()
+            else:
+                raise RuntimeError(f"Unknown embedding backend: {self._backend_type}")
+
+        return await asyncio.to_thread(_sync_embed_query)
+
