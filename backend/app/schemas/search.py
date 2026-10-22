@@ -26,6 +26,7 @@ class SearchResponse(BaseModel):
 
 
 class IndexDocumentResponse(BaseModel):
+    id: Optional[str] = Field(default=None, description="Unique database identifier for this document")
     filename: str = Field(..., description="Indexed document filename")
     total_pages: int = Field(..., description="Total pages in the document")
     total_chunks: int = Field(..., description="Total chunks extracted")

@@ -1,4 +1,4 @@
-import { DocumentApiError, DocumentUploadResponse } from '../types/document';
+import { DocumentApiError, DocumentUploadResponse, DocumentItem } from '../types/document';
 
 /**
  * Service for all HTTP interactions with the document extraction backend.
@@ -77,6 +77,76 @@ class DocumentApiService {
       } as DocumentApiError;
     }
   }
+
+  /**
+   * Fetch all uploaded documents from the backend database.
+   */
+  async getDocuments(): Promise<DocumentItem[]> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.cleanBaseUrl}/api/documents`, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+    } catch {
+      throw {
+        message: 'Unable to reach the server. Please verify the backend is running.',
+      } as DocumentApiError;
+    }
+
+    if (!response.ok) {
+      throw {
+        message: `Failed to load documents (HTTP ${response.status}).`,
+        statusCode: response.status,
+      } as DocumentApiError;
+    }
+
+    try {
+      return await response.json();
+    } catch {
+      throw {
+        message: 'Received an invalid response format from the server.',
+      } as DocumentApiError;
+    }
+  }
+
+  /**
+   * Delete a document by its internal ID from the database and vector store.
+   */
+  async deleteDocument(documentId: string): Promise<void> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.cleanBaseUrl}/api/documents/${documentId}`, {
+        method: 'DELETE',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+    } catch {
+      throw {
+        message: 'Unable to reach the server. Please verify the backend is running.',
+      } as DocumentApiError;
+    }
+
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const errorBody = await response.json();
+        if (typeof errorBody?.detail === 'string') {
+          detail = errorBody.detail;
+        }
+      } catch {
+        // Ignored
+      }
+      throw {
+        message: detail || `Failed to delete document (HTTP ${response.status}).`,
+        statusCode: response.status,
+      } as DocumentApiError;
+    }
+  }
 }
 
 export const documentApi = new DocumentApiService();
+

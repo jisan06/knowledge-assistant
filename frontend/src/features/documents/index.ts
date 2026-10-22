@@ -3,6 +3,7 @@
  */
 
 export { DocumentUploadPage } from './components/document-upload-page';
+export { DocumentList } from './components/document-list';
 export { UploadZone } from './components/upload-zone';
 export { ExtractionResults } from './components/extraction-results';
 export { PageResult } from './components/page-result';

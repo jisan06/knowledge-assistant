@@ -685,3 +685,155 @@ def test_update_pdf_index_endpoint():
     assert store.count() == 1
 
 
+# --- Tests for Document Management (Listing & Deletion) ---
+
+def test_list_documents_endpoint():
+    """
+    Verifies GET /api/documents returns empty list when no documents,
+    and populated list with document ID and metadata after upload.
+    """
+    # 1. Empty initially
+    resp = client.get("/api/documents")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # 2. Upload a document
+    pdf_bytes = generate_text_pdf("Document listing verification content.")
+    upload_resp = client.post(
+        "/api/documents/upload",
+        files={"file": ("list_test.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert upload_resp.status_code == 200
+    doc_id = upload_resp.json().get("id")
+    assert doc_id is not None
+
+    # 3. List contains the document
+    list_resp = client.get("/api/documents")
+    assert list_resp.status_code == 200
+    docs = list_resp.json()
+    assert len(docs) == 1
+    item = docs[0]
+    assert item["id"] == doc_id
+    assert item["filename"] == "list_test.pdf"
+    assert item["total_pages"] == 1
+    assert item["indexed_chunks"] >= 1
+    assert item["has_extractable_text"] is True
+    assert "created_at" in item
+
+
+def test_delete_document_by_id_success():
+    """
+    Verifies DELETE /api/documents/{document_id}:
+    1. Removes the document from the database.
+    2. Removes all associated chunks from the vector store.
+    3. Leaves the document list empty.
+    """
+    from app.vector_store.factory import get_vector_store
+    store = get_vector_store()
+
+    pdf_bytes = generate_text_pdf("Content to be deleted cleanly.")
+    upload_resp = client.post(
+        "/api/documents/upload",
+        files={"file": ("to_delete.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert upload_resp.status_code == 200
+    doc_id = upload_resp.json()["id"]
+    assert store.count() >= 1
+
+    # Delete the document by ID
+    del_resp = client.delete(f"/api/documents/{doc_id}")
+    assert del_resp.status_code == 200
+    del_data = del_resp.json()
+    assert del_data["status"] == "success"
+    assert del_data["deleted_id"] == doc_id
+    assert del_data["deleted_chunks"] >= 1
+
+    # Document list must now be empty
+    list_resp = client.get("/api/documents")
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 0
+
+    # Vector store count must be 0
+    assert store.count() == 0
+
+
+def test_delete_nonexistent_document_returns_404():
+    """
+    Verifies DELETE /api/documents/{document_id} returns 404 for missing document IDs.
+    """
+    resp = client.delete("/api/documents/nonexistent-id-00000000")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
+def test_deleted_document_chunks_no_longer_searchable():
+    """
+    Verifies that deleted document content can no longer appear in retrieval results.
+    """
+    unique_term = "PROJECT_CYGNUS_NINE_SPEC"
+    pdf_bytes = generate_text_pdf(f"Secret operational directives for {unique_term}.")
+
+    upload_resp = client.post(
+        "/api/documents/upload",
+        files={"file": ("cygnus.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert upload_resp.status_code == 200
+    doc_id = upload_resp.json()["id"]
+
+    # Verify search finds it before deletion
+    search_before = client.post("/api/documents/search", json={"query": unique_term, "top_k": 3})
+    assert search_before.status_code == 200
+    assert search_before.json()["total_results"] > 0
+    assert unique_term in search_before.json()["results"][0]["text"]
+
+    # Delete the document
+    del_resp = client.delete(f"/api/documents/{doc_id}")
+    assert del_resp.status_code == 200
+
+    # Verify search returns 0 results / no matching chunks after deletion
+    search_after = client.post("/api/documents/search", json={"query": unique_term, "top_k": 3})
+    assert search_after.status_code == 200
+    results = search_after.json()["results"]
+    for item in results:
+        assert unique_term not in item["text"]
+
+
+def test_delete_failure_rolls_back_and_preserves_consistency(monkeypatch):
+    """
+    Verifies that if database deletion fails:
+    1. Vector store chunks are restored from backup.
+    2. Document remains in database and searchable.
+    """
+    from app.vector_store.factory import get_vector_store
+    store = get_vector_store()
+
+    pdf_bytes = generate_text_pdf("Mission critical document with rollback protection.")
+    upload_resp = client.post(
+        "/api/documents/upload",
+        files={"file": ("rollback_doc.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert upload_resp.status_code == 200
+    doc_id = upload_resp.json()["id"]
+    assert store.count() == 1
+
+    # Simulate database commit failure during delete
+    from sqlalchemy.orm import Session
+    def failing_commit(self):
+        raise RuntimeError("Simulated database failure during document deletion")
+
+    monkeypatch.setattr(Session, "commit", failing_commit)
+
+    del_resp = client.delete(f"/api/documents/{doc_id}")
+    assert del_resp.status_code == 500
+
+    monkeypatch.undo()
+
+    # Verify vector store chunks were restored!
+    assert store.count() == 1
+    search_resp = client.post("/api/documents/search", json={"query": "rollback protection", "top_k": 2})
+    assert search_resp.status_code == 200
+    assert len(search_resp.json()["results"]) > 0
+    assert "rollback protection" in search_resp.json()["results"][0]["text"]
+
+
+

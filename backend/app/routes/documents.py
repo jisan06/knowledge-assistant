@@ -1,6 +1,6 @@
 import hashlib
 import logging
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from app.db.models import UploadedDocument
 from app.db.session import get_db
 from app.schemas.document import (
     DocumentUploadResponse,
+    DocumentItemResponse,
     ChunkPreviewRequest,
     ChunkPreviewResponse,
     EmbedPreviewRequest,
@@ -108,6 +109,7 @@ async def upload_document(
             f"with hash {content_hash[:8]}...). Skipping re-extraction and re-indexing."
         )
         return DocumentUploadResponse(
+            id=existing_content_doc.id,
             filename=filename,
             total_pages=existing_content_doc.total_pages,
             total_characters=existing_content_doc.total_characters,
@@ -178,6 +180,7 @@ async def upload_document(
             existing_doc_by_name.indexed_chunks = result.indexed_chunks
             existing_doc_by_name.has_extractable_text = result.has_extractable_text
             db.commit()
+            doc_id = existing_doc_by_name.id
         else:
             doc_record = UploadedDocument(
                 filename=filename,
@@ -190,7 +193,10 @@ async def upload_document(
             )
             db.add(doc_record)
             db.commit()
+            db.refresh(doc_record)
+            doc_id = doc_record.id
 
+        result.id = doc_id
         result.is_duplicate = False
         result.is_updated = is_update
         result.content_hash = content_hash
@@ -442,6 +448,7 @@ async def index_pdf_document(
             f"already indexed ({existing_content_doc.indexed_chunks} chunks). Skipping re-indexing."
         )
         return IndexDocumentResponse(
+            id=existing_content_doc.id,
             filename=filename,
             total_pages=existing_content_doc.total_pages,
             total_chunks=existing_content_doc.total_chunks,
@@ -499,6 +506,7 @@ async def index_pdf_document(
             existing_doc_by_name.indexed_chunks = indexed_count
             existing_doc_by_name.has_extractable_text = result.has_extractable_text
             db.commit()
+            doc_id = existing_doc_by_name.id
         else:
             doc_record = UploadedDocument(
                 filename=result.filename,
@@ -511,8 +519,11 @@ async def index_pdf_document(
             )
             db.add(doc_record)
             db.commit()
+            db.refresh(doc_record)
+            doc_id = doc_record.id
 
         return IndexDocumentResponse(
+            id=doc_id,
             filename=result.filename,
             total_pages=result.total_pages,
             total_chunks=len(result.chunks),
@@ -606,6 +617,102 @@ def clear_collection(db: Session = Depends(get_db)):
     except Exception:
         db.rollback()
     return {"status": "success", "message": "Vector collection cleared successfully."}
+
+
+@router.get(
+    "",
+    response_model=List[DocumentItemResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List all uploaded documents with metadata and indexing stats",
+)
+def list_documents(db: Session = Depends(get_db)):
+    """
+    Returns all uploaded documents recorded in the database, ordered newest first.
+    """
+    return (
+        db.query(UploadedDocument)
+        .order_by(UploadedDocument.created_at.desc())
+        .all()
+    )
+
+
+@router.get(
+    "/{document_id}",
+    response_model=DocumentItemResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get a single document's metadata by ID",
+)
+def get_document_by_id(document_id: str, db: Session = Depends(get_db)):
+    """
+    Retrieves metadata for a single uploaded document by its unique ID.
+    """
+    doc = db.query(UploadedDocument).filter(UploadedDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID '{document_id}' not found.",
+        )
+    return doc
+
+
+@router.delete(
+    "/{document_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Delete an uploaded document by ID from database and vector store",
+)
+def delete_document_by_id(
+    document_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Deletes an uploaded document by its unique ID:
+    1. Looks up the document record in SQLite.
+    2. Backs up vector store chunks for safe rollback if deletion fails.
+    3. Deletes associated vectors from vector store so they are no longer searchable.
+    4. Deletes the database record.
+    5. If database deletion fails, restores vector store chunks to maintain consistency.
+    """
+    doc = db.query(UploadedDocument).filter(UploadedDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID '{document_id}' not found.",
+        )
+
+    filename = doc.filename
+    search_service = SearchService()
+
+    # Backup vector records in case DB commit fails
+    backup_records = search_service.vector_store.get_by_filename(filename)
+
+    # Delete chunks from vector store
+    deleted_chunks = search_service.delete_document(filename)
+
+    try:
+        db.delete(doc)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Failed to delete document '{filename}' from database: {e}. Restoring vector records."
+        )
+        if backup_records:
+            try:
+                search_service.vector_store.restore_records(backup_records)
+            except Exception as restore_err:
+                logger.error(f"Failed to restore vector records for '{filename}': {restore_err}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete document '{filename}'. Deletion rolled back.",
+        )
+
+    return {
+        "status": "success",
+        "message": f"Document '{filename}' successfully deleted.",
+        "deleted_id": document_id,
+        "deleted_chunks": deleted_chunks,
+    }
+
 
 
 @router.post(

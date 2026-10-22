@@ -5,6 +5,7 @@ import { MainNav } from '@/components/main-nav';
 import { useDocumentUpload } from '../hooks/use-document-upload';
 import { UploadZone } from './upload-zone';
 import { ExtractionResults } from './extraction-results';
+import { DocumentList } from './document-list';
 
 /**
  * Top-level page component for the Documents / PDF extraction feature.
@@ -13,6 +14,14 @@ import { ExtractionResults } from './extraction-results';
 export function DocumentUploadPage() {
   const { status, selectedFile, validationError, uploadError, result, selectFile, upload, reset } =
     useDocumentUpload();
+
+  const [refreshTrigger, setRefreshTrigger] = React.useState(0);
+
+  React.useEffect(() => {
+    if (status === 'success') {
+      setRefreshTrigger((prev) => prev + 1);
+    }
+  }, [status]);
 
   const isUploading = status === 'uploading';
 
@@ -32,7 +41,7 @@ export function DocumentUploadPage() {
             <h1 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-base">
               Documents
             </h1>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">PDF Text Extraction</p>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">PDF Text Extraction & Knowledge Management</p>
           </div>
         </div>
 
@@ -52,7 +61,7 @@ export function DocumentUploadPage() {
                 Upload a PDF
               </h2>
               <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                Select or drag and drop a PDF document. The text will be extracted page by page.
+                Select or drag and drop a PDF document. The text will be extracted page by page and indexed into vector search.
               </p>
             </div>
 
@@ -92,6 +101,9 @@ export function DocumentUploadPage() {
         {status === 'success' && result && (
           <ExtractionResults result={result} onReset={reset} />
         )}
+
+        {/* Document management list */}
+        <DocumentList refreshTrigger={refreshTrigger} />
       </main>
     </div>
   );

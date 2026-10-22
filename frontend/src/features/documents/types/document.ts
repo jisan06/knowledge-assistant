@@ -26,6 +26,7 @@ export interface DocumentPage {
 
 /** Successful response from POST /api/documents/upload */
 export interface DocumentUploadResponse {
+  id?: string;
   filename: string;
   total_pages: number;
   total_characters: number;
@@ -38,6 +39,19 @@ export interface DocumentUploadResponse {
   is_duplicate?: boolean;
   is_updated?: boolean;
   content_hash?: string;
+}
+
+/** Record representing an uploaded document in the knowledge assistant. */
+export interface DocumentItem {
+  id: string;
+  filename: string;
+  content_hash: string;
+  total_pages: number;
+  total_characters: number;
+  total_chunks: number;
+  indexed_chunks: number;
+  has_extractable_text: boolean;
+  created_at: string;
 }
 
 /** Domain-level error shape used inside the feature */

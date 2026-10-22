@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -29,6 +30,7 @@ class DocumentPage(BaseModel):
 
 
 class DocumentUploadResponse(BaseModel):
+    id: Optional[str] = Field(default=None, description="Unique database identifier for this document")
     filename: str = Field(..., description="Original uploaded filename")
     total_pages: int = Field(..., description="Total number of pages parsed")
     total_characters: int = Field(..., description="Total characters extracted across all pages")
@@ -50,6 +52,22 @@ class DocumentUploadResponse(BaseModel):
     is_duplicate: bool = Field(default=False, description="True if the uploaded document content already exists in the system")
     is_updated: bool = Field(default=False, description="True if an existing document with the same filename was updated")
     content_hash: Optional[str] = Field(default=None, description="SHA-256 hash of the uploaded document content")
+
+
+class DocumentItemResponse(BaseModel):
+    id: str = Field(..., description="Unique database identifier for this document")
+    filename: str = Field(..., description="Filename of the uploaded document")
+    content_hash: str = Field(..., description="SHA-256 hash of the document content")
+    total_pages: int = Field(default=0, description="Total pages in the document")
+    total_characters: int = Field(default=0, description="Total extracted character count")
+    total_chunks: int = Field(default=0, description="Total chunks created from the document")
+    indexed_chunks: int = Field(default=0, description="Number of chunks stored in vector store")
+    has_extractable_text: bool = Field(default=True, description="Whether the document contains extractable text")
+    created_at: datetime = Field(..., description="Timestamp when the document was added/updated")
+
+    class Config:
+        from_attributes = True
+
 
 
 class ChunkPreviewRequest(BaseModel):
