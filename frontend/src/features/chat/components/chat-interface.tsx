@@ -22,6 +22,8 @@ export function ChatInterface() {
     isMessagesLoading,
     error,
     conversationsError,
+    isRagEnabled,
+    toggleRag,
     sendMessage,
     selectConversation,
     startNewChat,
@@ -164,7 +166,8 @@ export function ChatInterface() {
                 onChange={setInput}
                 onSubmit={() => sendMessage()}
                 isLoading={isLoading}
-                placeholder="Ask AI Chat anything... (Press Enter to send, Shift+Enter for new line)"
+                isRagEnabled={isRagEnabled}
+                onToggleRag={toggleRag}
               />
               <p className="mt-2 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
                 AI may produce inaccurate information about people, places, or facts.

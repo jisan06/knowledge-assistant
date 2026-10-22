@@ -43,6 +43,12 @@ export interface SendMessageApiResponse {
 
 export interface ChatRequest {
   message: string;
+  use_rag?: boolean;
+}
+
+export interface SendMessageRequest {
+  message: string;
+  use_rag?: boolean;
 }
 
 export interface ChatResponse {

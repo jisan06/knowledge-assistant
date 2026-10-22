@@ -10,6 +10,7 @@ class MessageBase(BaseModel):
 
 class MessageCreate(BaseModel):
     message: str = Field(..., min_length=1, description="Message text from user")
+    use_rag: bool = Field(default=False, description="Enable document-grounded RAG retrieval")
 
 
 class MessageResponse(BaseModel):

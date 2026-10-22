@@ -1,6 +1,7 @@
 import json
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -15,9 +16,13 @@ from app.schemas.chat import (
 )
 from app.services.chat_history_service import ChatHistoryService
 from app.services.ai_service import AIService
+from app.services.rag_service import RAGService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 ai_service = AIService()
+rag_service = RAGService()
 
 
 @router.post("", response_model=ConversationResponse, status_code=status.HTTP_201_CREATED)
@@ -94,10 +99,11 @@ def get_messages(conversation_id: str, db: Session = Depends(get_db)):
 async def send_message(
     conversation_id: str,
     payload: MessageCreate,
+    use_rag: Optional[bool] = Query(None, description="Optional override to enable/disable RAG"),
     db: Session = Depends(get_db),
 ):
     """
-    Non-streaming endpoint: Save user message, call AIService to generate response,
+    Non-streaming endpoint: Save user message, call AIService or RAGService to generate response,
     and persist both messages in the conversation.
     """
     user_text = payload.message.strip()
@@ -114,9 +120,15 @@ async def send_message(
             detail="Conversation not found",
         )
 
+    is_rag = payload.use_rag if use_rag is None else use_rag
+
     try:
-        reply_text = await ai_service.chat(user_text)
-    except Exception:
+        if is_rag:
+            reply_text = await rag_service.chat(user_text)
+        else:
+            reply_text = await ai_service.chat(user_text)
+    except Exception as e:
+        logger.exception("Error in send_message")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI service temporarily unavailable. Please try again.",
@@ -139,11 +151,13 @@ async def send_message(
 async def send_message_stream(
     conversation_id: str,
     payload: MessageCreate,
+    use_rag: Optional[bool] = Query(None, description="Optional override to enable/disable RAG"),
     db: Session = Depends(get_db),
 ):
     """
     Streaming endpoint: Progressively yields AI response chunks via Server-Sent Events (SSE).
     Persists user message upfront, streams chunks, and persists assistant message upon completion.
+    Supports document-grounded RAG retrieval when use_rag is True.
     """
     user_text = payload.message.strip()
     if not user_text:
@@ -159,6 +173,8 @@ async def send_message_stream(
             detail="Conversation not found",
         )
 
+    is_rag = payload.use_rag if use_rag is None else use_rag
+
     # Persist user message immediately in a quick transaction
     user_msg = ChatHistoryService.add_user_message(
         db=db,
@@ -173,7 +189,12 @@ async def send_message_stream(
 
         accumulated_text = ""
         try:
-            async for chunk in ai_service.chat_stream(user_text):
+            stream_gen = (
+                rag_service.chat_stream(user_text)
+                if is_rag
+                else ai_service.chat_stream(user_text)
+            )
+            async for chunk in stream_gen:
                 accumulated_text += chunk
                 chunk_data = json.dumps({"chunk": chunk})
                 yield f"event: chunk\ndata: {chunk_data}\n\n"
@@ -192,7 +213,7 @@ async def send_message_stream(
                 db_final.close()
 
         except Exception:
-            # Do not persist partial/failed answers; notify client with error event
+            logger.exception("Error during AI response streaming")
             error_data = json.dumps({
                 "error": "The AI service encountered an error while generating the response."
             })

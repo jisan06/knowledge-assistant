@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     EMBEDDING_PROVIDER: str = "local"  # "local", "mock", etc.
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"  # Compact 384-dim semantic embedding model
     EMBEDDING_DIMENSION: int = 384  # Vector length matching BAAI/bge-small-en-v1.5 & all-MiniLM-L6-v2
+    VECTOR_STORE_TYPE: str = "chroma"  # "chroma" or "memory"
+    CHROMA_PERSIST_DIRECTORY: str = str(Path(__file__).resolve().parent.parent / "data" / "chroma")
+    CHROMA_COLLECTION_NAME: str = "document_chunks"
+    SEARCH_TOP_K: int = 4  # Default top 3-5 results for semantic search
 
     model_config = SettingsConfigDict(
         env_file=(str(ENV_FILE_PATH), ".env"),

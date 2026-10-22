@@ -156,7 +156,8 @@ class ChatApiService {
   async sendMessageToConversation(
     conversationId: string,
     message: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    useRag: boolean = false
   ): Promise<SendMessageApiResponse> {
     const trimmed = message.trim();
     if (!trimmed) {
@@ -175,7 +176,7 @@ class ChatApiService {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          body: JSON.stringify({ message: trimmed }),
+          body: JSON.stringify({ message: trimmed, use_rag: useRag }),
           signal,
         }
       );
@@ -207,7 +208,8 @@ class ChatApiService {
     conversationId: string,
     message: string,
     callbacks: StreamMessageCallbacks,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    useRag: boolean = false
   ): Promise<void> {
     const trimmed = message.trim();
     if (!trimmed) {
@@ -227,7 +229,7 @@ class ChatApiService {
             'Content-Type': 'application/json',
             Accept: 'text/event-stream',
           },
-          body: JSON.stringify({ message: trimmed }),
+          body: JSON.stringify({ message: trimmed, use_rag: useRag }),
           signal,
         }
       );

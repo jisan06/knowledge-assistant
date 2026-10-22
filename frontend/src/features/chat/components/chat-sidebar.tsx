@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { Conversation } from '../types/chat';
 import { Button } from '@/components/ui/button';
 import { cn, formatTime } from '@/lib/utils';
@@ -173,6 +174,31 @@ export function ChatSidebar({
               </div>
             );
           })}
+      </div>
+
+      {/* Sidebar Navigation Footer */}
+      <div className="pt-2 mt-auto border-t border-zinc-200/60 dark:border-zinc-800/80">
+        <Link
+          href="/documents"
+          onClick={onClose}
+          className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-200 transition-colors"
+        >
+          <svg
+            className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+            />
+          </svg>
+          <span className="truncate">Documents & PDF Upload</span>
+        </Link>
       </div>
     </aside>
   );

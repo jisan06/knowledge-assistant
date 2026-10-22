@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
+import { MainNav } from '@/components/main-nav';
 import { useDocumentUpload } from '../hooks/use-document-upload';
 import { UploadZone } from './upload-zone';
 import { ExtractionResults } from './extraction-results';
@@ -36,17 +36,10 @@ export function DocumentUploadPage() {
           </div>
         </div>
 
-        {/* Back to chat link */}
-        <Link
-          href="/"
-          className="flex items-center gap-1.5 rounded-xl border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:border-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          aria-label="Back to Chat"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-          </svg>
-          <span className="hidden sm:inline">Back to Chat</span>
-        </Link>
+        {/* Navigation Switcher */}
+        <div className="flex items-center gap-2">
+          <MainNav activeSection="documents" />
+        </div>
       </header>
 
       {/* Main content */}

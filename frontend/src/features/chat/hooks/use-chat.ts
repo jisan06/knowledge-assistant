@@ -24,6 +24,9 @@ export interface UseChatReturn {
   isMessagesLoading: boolean;
   error: string | null;
   conversationsError: string | null;
+  isRagEnabled: boolean;
+  setIsRagEnabled: (value: boolean) => void;
+  toggleRag: () => void;
   sendMessage: (customMessage?: string) => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
   startNewChat: () => void;
@@ -32,6 +35,8 @@ export interface UseChatReturn {
   clearError: () => void;
   loadConversations: () => Promise<void>;
 }
+
+const STORAGE_RAG_ENABLED_KEY = 'ai_chat_rag_enabled';
 
 export function useChat(): UseChatReturn {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -43,6 +48,27 @@ export function useChat(): UseChatReturn {
   const [isMessagesLoading, setIsMessagesLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [conversationsError, setConversationsError] = useState<string | null>(null);
+  const [isRagEnabled, setIsRagEnabled] = useState<boolean>(true);
+
+  // Restore RAG preference from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(STORAGE_RAG_ENABLED_KEY);
+      if (saved !== null) {
+        setIsRagEnabled(saved === 'true');
+      }
+    }
+  }, []);
+
+  const toggleRag = useCallback(() => {
+    setIsRagEnabled((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_RAG_ENABLED_KEY, String(next));
+      }
+      return next;
+    });
+  }, []);
 
   const isSubmittingRef = useRef<boolean>(false);
   const isInitialMountRef = useRef<boolean>(true);
@@ -329,7 +355,8 @@ export function useChat(): UseChatReturn {
               activeAbortControllerRef.current = null;
             },
           },
-          abortController.signal
+          abortController.signal,
+          isRagEnabled
         );
       } catch (err: unknown) {
         const apiError = err as ChatApiError;
@@ -353,7 +380,7 @@ export function useChat(): UseChatReturn {
         activeAbortControllerRef.current = null;
       }
     },
-    [currentConversationId, input, loadConversations]
+    [currentConversationId, input, loadConversations, isRagEnabled]
   );
 
   const currentConversation =
@@ -371,6 +398,9 @@ export function useChat(): UseChatReturn {
     isMessagesLoading,
     error,
     conversationsError,
+    isRagEnabled,
+    setIsRagEnabled,
+    toggleRag,
     sendMessage,
     selectConversation,
     startNewChat,
