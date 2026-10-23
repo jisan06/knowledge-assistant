@@ -8,9 +8,11 @@
 [![Google Gemini](https://img.shields.io/badge/LLM-Google%20Gemini%202.5%20Flash-4285F4.svg?style=flat&logo=google)](https://ai.google.dev)
 [![Pytest](https://img.shields.io/badge/Testing-Pytest%208.0%2B-0A9EDC.svg?style=flat&logo=pytest)](https://docs.pytest.org)
 
-An end-to-end, production-grade **Retrieval-Augmented Generation (RAG)** platform designed to ingest, chunk, embed, index, and query PDF documents with verifiable source citations and streaming responses. 
+Knowledge Assistant is an AI project that lets you upload PDF documents and ask questions about them. 
 
-The application pairs a high-performance **FastAPI** backend with a modern **Next.js 16** (React 19) App Router frontend. It employs local dense vector embeddings (`BAAI/bge-small-en-v1.5`), persistent **ChromaDB** storage, hybrid dense-lexical reranking, bounded exponential retries against **Google Gemini 2.5 Flash**, content-hash duplicate detection, and automated RAG evaluation.
+Instead of guessing or making things up, the assistant uses **Retrieval-Augmented Generation (RAG)** to read your documents, find the exact parts that match your question, and give you clear answers with exact page numbers.
+
+The project pairs a **FastAPI** (Python) backend with a clean **Next.js 16** (React 19) frontend. It creates text embeddings on your local machine using FastEmbed, saves them in a persistent ChromaDB vector database, and uses **Google Gemini 2.5 Flash** to write grounded answers in real-time streaming text.
 
 ---
 
@@ -18,582 +20,481 @@ The application pairs a high-performance **FastAPI** backend with a modern **Nex
 
 - [1. Project Overview](#1-project-overview)
 - [2. Key Features](#2-key-features)
-- [3. AI Concepts Implemented](#3-ai-concepts-implemented)
-- [4. RAG Architecture and Workflow](#4-rag-architecture-and-workflow)
-- [5. Technology Stack](#5-technology-stack)
-- [6. Architecture and Project Structure](#6-architecture-and-project-structure)
-- [7. Prerequisites and Installation](#7-prerequisites-and-installation)
-- [8. How to Use](#8-how-to-use)
-- [9. API Overview](#9-api-overview)
-- [10. Evaluation and Testing](#10-evaluation-and-testing)
+- [3. AI Concepts Explained in Plain English](#3-ai-concepts-explained-in-plain-english)
+- [4. How RAG Works (Workflows & Diagrams)](#4-how-rag-works-workflows--diagrams)
+- [5. Tech Stack](#5-tech-stack)
+- [6. Project Structure](#6-project-structure)
+- [7. Setup & Installation](#7-setup--installation)
+- [8. How to Use the App](#8-how-to-use-the-app)
+- [9. API Reference](#9-api-reference)
+- [10. Testing & Evaluation](#10-testing--evaluation)
 - [11. Known Limitations](#11-known-limitations)
-- [12. Security Considerations](#12-security-considerations)
+- [12. Security & Safety](#12-security--safety)
 - [13. Future Improvements](#13-future-improvements)
-- [14. Learning Outcomes](#14-learning-outcomes)
+- [14. What This Project Demonstrates](#14-what-this-project-demonstrates)
 - [15. License](#15-license)
 
 ---
 
 ## 1. Project Overview
 
-### What the Application Does
-Knowledge Assistant is an AI-powered document intelligence system. Users can upload arbitrary PDF documents (such as corporate handbooks, research papers, legal policies, or manuals), which the system extracts, chunks, vectorizes, and indexes. Users can then ask open-ended questions in natural language and receive grounded answers synthesized exclusively from the uploaded material, accompanied by precise page-level citations.
+### What It Does
+Knowledge Assistant helps you find information inside PDF files quickly. You upload a PDF—like an employee handbook, policy guide, or technical report—and then chat with it like you would with a person. The assistant answers your questions based only on the contents of the file, and tells you exactly which page each fact came from.
 
 ### The Problem It Solves
-Standard Large Language Models (LLMs) suffer from three critical production failure modes:
-1. **Hallucinations**: Generating confident, fluent answers that are factually incorrect or fabricated.
-2. **Knowledge Cutoffs and Privacy Gaps**: Inability to access private, local, or up-to-date proprietary documents without retraining.
-3. **Lack of Traceability**: Providing answers without verifiable source citations or evidence.
+Normal AI chatbots have three big problems when used for real work:
+1. **They hallucinate**: They can make up facts that sound very believable but are completely wrong.
+2. **They don't know your files**: They cannot see your company's private documents or recent files unless you feed them directly.
+3. **They don't show proof**: They give you an answer, but they don't show where they found the information.
 
-Knowledge Assistant solves these challenges by combining dense semantic vector search with prompt-grounded LLM inference:
-- The system only provides answers supported by retrieved document excerpts.
-- Every claim cites the exact source file and 1-based page number (e.g., `[Source: company_handbook.pdf, Page 3]`).
-- When a query cannot be answered from the uploaded text, the model explicitly admits that the documents do not provide enough information rather than guessing.
+Knowledge Assistant fixes these issues:
+- It searches your uploaded files first, pulls out the exact paragraphs needed, and hands them to the AI model.
+- The AI model is strictly instructed to only use the provided text and cite the source (e.g., `[Source: company_handbook.pdf, Page 3]`).
+- If the answer is not in the document, it simply says: *"The uploaded documents do not provide enough information to answer this question."*
 
 ### Main Capabilities
-- **In-Memory PDF Extraction**: Fast, secure page-by-page text extraction without writing uploaded files to disk.
-- **Page-Aware Boundary Chunking**: Splits text into ~800-character chunks with ~150-character overlaps, strictly preserving page boundaries.
-- **Local Dense Embeddings**: Generates 384-dimensional dense semantic vectors using `BAAI/bge-small-en-v1.5` via FastEmbed, requiring zero external embedding API calls.
-- **Persistent Vector Storage**: Stores chunk embeddings and metadata in ChromaDB with persistent disk backing and atomic update/rollback safety.
-- **Hybrid Dense-Lexical Reranking**: Blends dense cosine similarity (65%) with inverse document frequency (BM25-style lexical matching, 35%) to prevent term dilution.
-- **Resilient Hosted LLM Pipeline**: Queries Google Gemini 2.5 Flash using bounded retries, exponential backoff, and `Retry-After` header parsing.
-- **Real-Time Token Streaming**: Server-Sent Events (SSE) streaming delivering instant responses with client-disconnect detection.
-- **Lifecycle Document Management**: SHA-256 duplicate detection, atomic document replacement, and complete deletion across SQLite and ChromaDB.
-- **Automated RAG Evaluation Suite**: Quantitative benchmarking measuring Recall@K, Mean Reciprocal Rank (MRR), Citation Correctness, Refusal Accuracy, and Fact Coverage.
+- **Fast, in-memory PDF reading**: Reads text page-by-page directly in memory without saving the raw files on disk.
+- **Smart text chunking**: Cuts long pages into ~800-character pieces with a 150-character overlap, without mixing text between different pages.
+- **Free local embeddings**: Uses a compact embedding model (`BAAI/bge-small-en-v1.5`) running on your own computer. You do not need to pay for an external embedding API.
+- **Persistent vector database**: Saves vectors in ChromaDB so your indexed documents remain ready to search even if you restart the server.
+- **Reranking for better search results**: Combines semantic meaning (65%) with exact word matching (35%) so specific terms and numbers don't get missed.
+- **Resilient AI connections**: Automatically retries if Google Gemini is busy (rate limits or 503 errors) using exponential backoff.
+- **Live streaming chat**: Displays answers word-by-word as they are generated using Server-Sent Events (SSE).
+- **Document management**: Detects duplicate uploads with SHA-256 hashes, cleanly updates existing files, and lets you delete documents with one click.
+- **Built-in evaluation script**: Tests the system on 20 benchmark questions to measure search accuracy, citations, and refusal of unanswerable questions.
 
 ---
 
 ## 2. Key Features
 
-| Feature | Implementation Details |
+| Feature | How It Works in This Project |
 | :--- | :--- |
-| **PDF Upload & In-Memory Extraction** | Validates PDF magic bytes (`%PDF`), enforces file size limits (default 10 MB), checks for password encryption, and extracts text page-by-page using PyPDF purely in memory. |
-| **Page-Aware Chunking** | Configurable chunk size (800 chars) and overlap (150 chars). Text from different pages is **never** merged across page boundaries. Splits at natural paragraph (`\n\n`), line (`\n`), sentence, or word boundaries. |
-| **Deterministic Chunk IDs** | Chunks receive stable IDs matching `{clean_filename}_p{page_number}_c{chunk_index}`, guaranteeing reproducible lookups and clean upserts. |
-| **Local Dense Embeddings** | Uses FastEmbed with `BAAI/bge-small-en-v1.5` (384 dimensions) for local execution without external embedding API costs or network latency. |
-| **Persistent Vector Database** | ChromaDB persistent storage located at `backend/data/chroma`. Features automatic graceful fallback to a JSON-backed persistent store if ChromaDB is unavailable. |
-| **Hybrid Retrieval & Reranking** | Retrieves an expanded candidate pool (`top_k * 3`) and linearly blends dense vector cosine similarity (65%) with lexical keyword matching (35%) to prioritize high-discrimination terms. |
-| **Strictly Grounded RAG** | Assembles retrieved excerpts into structured prompts with negative constraints: answer strictly from context, cite sources, and admit missing information. |
-| **Real-Time SSE Streaming** | Streams tokens via Server-Sent Events (`/api/conversations/{id}/messages/stream`) with immediate user message persistence and client disconnect detection (`request.is_disconnected()`). |
-| **Source Citations** | Synthesizes answers containing inline citations citing the exact document and page number (e.g. `[Source: company_handbook.pdf, Page 4]`). |
-| **Content-Hash Duplicate Detection** | Computes SHA-256 digests over uploaded bytes. Re-uploading an identical file skips re-extraction, re-embedding, and vector upserting, returning the existing indexed record. |
-| **Atomic Document Updates** | Uploading an updated PDF with the same filename embeds new chunks first, backs up existing vectors, deletes stale chunks, upserts new chunks, and automatically rolls back if an error occurs. |
-| **Document Deletion & Cleanup** | `DELETE /api/documents/{id}` removes SQLite records and vector store entries atomically, ensuring deleted content can no longer appear in search results or RAG answers. |
-| **Fault-Tolerant Error Handling** | Handles Gemini 429 rate limits and 503 service outages with exponential backoff (up to 3 retries). Sanitizes API keys and secrets from logs and client error responses. |
-| **Dual-Mode RAG Evaluation** | Script at `backend/scripts/evaluate_rag.py` supports both deterministic offline mock testing and live end-to-end evaluation with quantitative metrics. |
+| **PDF Upload & Validation** | Checks the file format, makes sure it starts with the standard PDF header (`%PDF`), rejects files bigger than 10 MB, and extracts text page-by-page using PyPDF. |
+| **Page-Aware Chunking** | Splits each page into chunks of roughly 800 characters with 150 characters of overlap. It never combines text from two different pages, keeping page numbers completely accurate. |
+| **Stable Chunk IDs** | Gives every chunk a unique ID like `handbook_pdf_p2_c1` (filename, page 2, chunk 1), making lookups and updates clean and predictable. |
+| **Local Text Embeddings** | Runs FastEmbed on your machine with `BAAI/bge-small-en-v1.5` to turn text into 384-number vectors without calling any external embedding API. |
+| **ChromaDB Storage** | Stores all vectors on disk in `backend/data/chroma`. If ChromaDB is not installed, it automatically falls back to a simple file-backed vector store so the app still works. |
+| **Hybrid Search & Reranking** | Finds candidate chunks using vector similarity, then boosts chunks that share exact important words with the question. This prevents rare terms and numbers from getting lost. |
+| **Strictly Grounded Answers** | Sends the retrieved snippets to Google Gemini 2.5 Flash with strict rules: use only these excerpts, cite the page, and never make things up. |
+| **Live Word-by-Word Streaming** | Streams the answer live to the frontend using Server-Sent Events (SSE), so you don't have to wait for the whole answer to finish before reading. |
+| **Exact Source Citations** | The assistant adds citations directly into its answer, such as `[Source: handbook.pdf, Page 4]`. |
+| **Duplicate File Detection** | Computes a SHA-256 hash for every file. If you upload the exact same PDF twice, it reuses the existing chunks instead of wasting time re-indexing. |
+| **Safe Document Updates** | If you upload an edited PDF with the same filename, it replaces the old chunks with the new ones. If something fails, it restores your old version automatically. |
+| **Easy Document Deletion** | Deleting a document removes its records from both SQLite and ChromaDB, so its content stops showing up in future search results immediately. |
+| **Smart Rate-Limit Handling** | If Gemini returns a 429 (too many requests) or 503 (server busy), the backend waits and retries up to 3 times before giving up. |
+| **Built-in Test Suite** | Includes 6 unit test suites and an evaluation script (`evaluate_rag.py`) to test search accuracy, citations, and answer quality. |
 
 ---
 
-## 3. AI Concepts Implemented
+## 3. AI Concepts Explained in Plain English
 
-The following table distinguishes AI and engineering concepts actively implemented in this codebase from related theoretical concepts:
+Here is a quick look at the AI ideas used in this project, and how they compare to ideas that are *not* part of this project:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        AI Concepts in this Project                     │
 ├───────────────────────────────────┬────────────────────────────────────┤
-│       Actively Implemented        │   Not Implemented / Related Only   │
+│         Used in This App          │    NOT Used / Related Only         │
 ├───────────────────────────────────┼────────────────────────────────────┤
-│ • Retrieval-Augmented Generation  │ • Fine-tuning / Model Training     │
-│ • Local Dense Vector Embeddings   │ • Reinforcement Learning (RLHF)    │
-│ • Vector Similarity Search (ANN)  │ • Graph-based RAG (GraphRAG)       │
-│ • Hybrid Reranking (Dense+Lexical)│ • Optical Character Recognition    │
-│ • Prompt Grounding & Citations    │ • Cross-Encoder Neural Rerankers   │
-│ • Bounded Retry / Rate-Limit Exp. │ • Agentic Tool-Calling Loops       │
-│ • RAG Evaluation (Recall, MRR)    │ • Multi-modal Visual Embeddings    │
+│ • Retrieval-Augmented Generation  │ • Training your own AI model       │
+│ • Local Text Embeddings           │ • Fine-tuning model weights        │
+│ • Vector Similarity Search        │ • Reinforcement learning (RLHF)    │
+│ • Hybrid Reranking (Vector + Words)│ • Reading scanned images (OCR)    │
+│ • Prompt Grounding & Citations    │ • Complex multi-agent loops        │
+│ • Streaming AI Responses          │ • Graph-based RAG (GraphRAG)       │
+│ • Automated RAG Evaluation        │ • Cross-encoder neural rerankers   │
 └───────────────────────────────────┴────────────────────────────────────┘
 ```
 
-### Detailed Conceptual Breakdown
+### Detailed Explanations
 
-#### 1. Artificial Intelligence, Machine Learning & LLMs
-- **Concept**: Artificial Intelligence encompasses computer systems performing tasks that traditionally require human cognition. Machine Learning models learn statistical representations from training data. Large Language Models (LLMs) are deep neural networks (typically Transformers) trained on massive text corpora to predict next tokens in a sequence.
-- **In This Project**: The project **does not train or fine-tune its own LLM**. It uses Google's hosted, pretrained `gemini-2.5-flash` foundation model via official API endpoints (`google-genai` SDK) strictly for inference, prompt-guided synthesis, and summarization.
+#### 1. Artificial Intelligence (AI) and Large Language Models (LLMs)
+- **What it means**: AI refers to computer programs that can perform tasks that usually require human intelligence. Large Language Models (like GPT-4 or Gemini) are giant neural networks trained on billions of pages of text to predict the next words in a conversation.
+- **In this project**: We **do not train or fine-tune our own model**. That would take hundreds of expensive graphics cards. Instead, we use Google's ready-to-use `gemini-2.5-flash` model through an API to read our text and write answers.
 
 #### 2. Generative AI
-- **Concept**: Generative AI refers to algorithms capable of generating novel content (text, audio, imagery) based on learned probabilistic distributions and input context.
-- **In This Project**: Used to generate fluent, context-grounded textual answers to arbitrary user questions based on retrieved knowledge snippets.
+- **What it means**: AI that can create new content (like writing sentences, code, or summaries) based on what you ask.
+- **In this project**: It writes natural, human-like answers to your questions based on what it finds in your PDF.
 
 #### 3. Retrieval-Augmented Generation (RAG)
-- **Concept**: RAG is an architectural pattern that bridges static LLM weights with external dynamic knowledge. Instead of expecting the LLM to recall facts from its training parameters, relevant passages are dynamically retrieved from an indexed knowledge store and injected into the prompt as reference material.
-- **In This Project**: Fully implemented end-to-end: PDF text is indexed into ChromaDB; incoming user queries trigger semantic vector retrieval; retrieved chunks populate a structured context block; Gemini generates an answer grounded strictly within that context.
+- **What it means**: Instead of asking the AI model to remember everything from memory, you first search your own documents (Retrieval), pick out the most useful paragraphs, and paste them into the prompt (Augmented). Then, the AI uses those paragraphs to write the answer (Generation).
+- **In this project**: This is the core workflow: PDF text $\rightarrow$ search relevant pieces $\rightarrow$ feed pieces to Gemini $\rightarrow$ return cited answer.
 
 #### 4. Document Ingestion and Preprocessing
-- **Concept**: The extraction, sanitization, and normalization of raw unstructured documents into structured, parseable text representations.
-- **In This Project**: `PDFService` validates PDF headers (`%PDF`), strips unsafe path characters, detects password encryption, and extracts clean unicode text on a per-page basis strictly in memory.
+- **What it means**: Taking raw files, checking that they are safe and valid, and extracting clean text out of them.
+- **In this project**: The code inspects the PDF bytes, verifies the file is not damaged or password-locked, cleans up the filename, and extracts text page-by-page.
 
-#### 5. Text Chunking and Chunk Metadata
-- **Concept**: Dividing long documents into smaller textual segments suitable for embedding models and LLM context windows. Preserving contextual metadata (source file, page, offset) is essential for traceability.
-- **In This Project**: `ChunkingService` enforces a target chunk size of ~800 characters with a 150-character sliding overlap. It strictly isolates page boundaries (never merging across pages), searches for natural semantic split boundaries (`\n\n`, `\n`, sentence punctuation, spaces), and attaches source filename, page number, and stable IDs to each chunk.
+#### 5. Text Chunking and Metadata
+- **What it means**: AI models and embedding tools cannot read an entire 100-page book at once. Chunking means breaking the text down into small, digestible pieces (like 1 to 2 paragraphs each). Metadata is extra information attached to each piece, such as which file and page it came from.
+- **In this project**: We cut text into pieces of about 800 characters with 150 characters of overlap. We never blend text across page lines, and we tag every chunk with its file name, page number, and chunk position.
 
 #### 6. Text Embeddings and Semantic Similarity
-- **Concept**: Embedding models map arbitrary text strings into continuous, high-dimensional vector spaces ($\mathbb{R}^d$) such that texts with similar semantic meanings reside close to each other, as measured by mathematical distance (e.g., Cosine Similarity or Euclidean Distance).
-- **In This Project**: Uses FastEmbed running `BAAI/bge-small-en-v1.5` locally to generate 384-dimensional dense float vectors. Query embeddings and chunk embeddings are compared using cosine similarity ($1 - \text{cosine\_distance}$).
+- **What it means**: Computers do not understand words; they understand numbers. An embedding model converts a piece of text into a list of numbers (a vector). Sentences with similar meanings end up with similar numbers, even if they use completely different words (for example, "how much does it cost?" and "what is the price?" will have very close numbers).
+- **In this project**: We use a local model (`bge-small-en-v1.5`) that turns every chunk into a list of 384 numbers. We compare two pieces of text using **cosine similarity** to see how close their meanings are.
 
-#### 7. Vector Databases and Similarity Search
-- **Concept**: Specialized databases optimized to index, store, and query millions of high-dimensional vectors efficiently using Approximate Nearest Neighbor (ANN) or exact k-Nearest Neighbor (k-NN) algorithms.
-- **In This Project**: ChromaDB (`ChromaVectorStore`) stores chunk embeddings alongside chunk text, filename, and page number in a persistent directory (`backend/data/chroma`). An in-memory vector store (`InMemoryVectorStore`) is also implemented for lightweight testing.
+#### 7. Vector Databases
+- **What it means**: A regular database (like MySQL or SQLite) is great for looking up exact text or numbers. A vector database is built specifically to store lists of numbers and quickly find which ones are closest to your question.
+- **In this project**: We use ChromaDB. It saves all the chunk vectors into a folder on your drive (`backend/data/chroma`) so you can search them at any time.
 
 #### 8. Hybrid Retrieval and Reranking
-- **Concept**: Dense vector search excels at conceptual matching but can miss exact keyword matches, technical codes, or proper nouns. Hybrid retrieval combines dense semantic vector search with sparse lexical scoring (such as BM25) to achieve the best of both worlds.
-- **In This Project**: `SearchService._apply_hybrid_reranking` retrieves `top_k * 3` candidate chunks using dense cosine similarity, computes an inverse document frequency (IDF) weighted lexical score for discriminative query terms, and linearly blends them:
-  $$\text{Score}_{\text{hybrid}} = 0.65 \times \text{Similarity}_{\text{dense}} + 0.35 \times \text{Score}_{\text{lexical}}$$
+- **What it means**: Vector search is great for finding general meanings, but it can sometimes overlook exact words, technical model numbers, or codes. Hybrid search combines vector search with classic keyword search so you don't miss exact terms.
+- **In this project**: The app retrieves the top candidate chunks, checks for exact matching words, and calculates a combined score (65% vector similarity + 35% word match). The chunks with the highest combined score are selected.
 
-#### 9. Prompt Engineering and Context Augmentation
-- **Concept**: The strategic design of system instructions, constraints, and injected context to guide the LLM's outputs toward desired behaviors and formatting rules.
-- **In This Project**: `RAGService.format_rag_prompt` organizes retrieved chunks into delineated `[Source X: filename | Page Y | Chunk ID: Z]` blocks and applies strict grounding guardrails.
+#### 9. Prompt Engineering and Grounded Generation
+- **What it means**: Prompt engineering means writing clear, firm instructions for the AI model. Grounded generation means forcing the model to stay strictly inside the facts you gave it, rather than pulling answers out of thin air.
+- **In this project**: Our prompt tells Gemini: *"Answer the user's question using ONLY the excerpts below. For every claim, add a citation with the page number. If the answer is not in the text, say you don't know."*
 
-#### 10. Grounded Generation and Hallucination Reduction
-- **Concept**: Constraining the model to generate responses derived *solely* from supplied context passages, instructing it to refuse to answer if information is absent.
-- **In This Project**: The prompt enforces negative constraints: *"If the provided context does NOT contain enough information to answer the question, clearly state: 'The uploaded documents do not provide enough information to answer this question.' Do NOT attempt to guess, extrapolate, or fabricate any information or citations."*
+#### 10. Source Citations
+- **What it means**: Giving credit to the exact source page so a human can easily verify the AI's claims.
+- **In this project**: The model is instructed to write `[Source: filename.pdf, Page 2]` after every answer.
 
-#### 11. Source Citations and Traceability
-- **Concept**: Requiring the generative model to explicitly reference the specific source document and page number for every factual claim it makes.
-- **In This Project**: System prompts instruct the LLM to tag every fact with `[Source: filename.pdf, Page X]`. The evaluation harness inspects output answers to verify that cited page numbers match the actual source pages.
+#### 11. Streaming Responses
+- **What it means**: Instead of waiting 5 to 10 seconds for the model to finish writing its entire answer, the server sends each word to your screen as soon as it is generated.
+- **In this project**: We use Server-Sent Events (SSE) so words appear on your screen in real time. If you close your browser tab, the server stops generating immediately to save resources.
 
-#### 12. Streaming LLM Responses
-- **Concept**: Progressively sending text tokens to the client over an open HTTP connection as they are generated by the model, minimizing perceived time-to-first-token (TTFT).
-- **In This Project**: `POST /api/conversations/{id}/messages/stream` uses FastAPI's `StreamingResponse` to deliver Server-Sent Events (SSE) events (`user_message`, `chunk`, `complete`, `error`), with active client-disconnect checks.
+#### 12. Rate Limits and Retries with Backoff
+- **What it means**: If you send too many requests to an AI service, it will temporarily block you with an error (HTTP 429). Exponential backoff means waiting a short time (e.g., 1 second), then twice as long (2 seconds), then 4 seconds, before trying again.
+- **In this project**: Our backend automatically handles rate limits and retries up to 3 times before showing an error.
 
-#### 13. RAG Evaluation and Retrieval Metrics
-- **Concept**: Measuring the quantitative performance of both retrieval (did we find the right documents?) and generation (did the model answer accurately with correct citations?).
-- **In This Project**: Implemented in `backend/scripts/evaluate_rag.py`:
-  - **Recall@K**: Whether an expected relevant page was retrieved within the top-K chunks.
-  - **Mean Reciprocal Rank (MRR)**: $1 / \text{rank}$ of the first relevant retrieved page.
-  - **Citation Correctness**: Whether the model's citations point to valid ground-truth pages.
-  - **Refusal Accuracy**: Whether unanswerable questions were correctly declined without hallucinations.
-  - **Normalized Fact Coverage**: Lexical token and phrase verification comparing model answers against ground-truth fact checklists.
-
-#### 14. API Integration with an LLM Provider
-- **Concept**: Communicating over secure HTTPS with an external hosted foundation model provider using their official SDK, handling authentication, request serialization, and response parsing.
-- **In This Project**: Interfaces with Google Gemini using the new `google-genai` SDK (`genai.Client(api_key=...)`).
-
-#### 15. Retry Handling, Rate Limits & Failure Recovery
-- **Concept**: Building resilient distributed integrations that withstand transient HTTP 429 (Rate Limit / Quota Exceeded) and 503 (Service Unavailable) errors using exponential backoff and jitter.
-- **In This Project**: `GeminiProvider` implements a bounded retry loop (up to 3 retries) with exponential backoff ($delay = initial \times 2^{attempt}$), parses `Retry-After` headers, distinguishes transient from permanent errors (e.g., 401 Auth errors fail immediately), and sanitizes credentials from log outputs.
-
-#### 16. Unit Testing and Integration Testing
-- **Concept**: Validating software correctness at multiple levels of granularity: isolated unit tests for individual functions and end-to-end integration tests for multi-component workflows.
-- **In This Project**: 6 comprehensive Pytest suites verify PDF chunking, document upload/deletion lifecycles, vector storage, RAG prompt construction, streaming mechanics, and evaluation metrics using deterministic offline mocks.
+#### 13. RAG Evaluation
+- **What it means**: Testing how well your RAG system actually works with numbers, rather than just guessing.
+- **In this project**: We measure 5 clear metrics:
+  - **Recall**: Did we find the right page?
+  - **MRR (Ranking quality)**: Was the right page at the top of the search results?
+  - **Citation Correctness**: Did the AI cite real, relevant pages?
+  - **Refusal Accuracy**: Did the AI correctly say "I don't know" when asked about something not in the PDF?
+  - **Fact Coverage**: Did the AI mention the key facts in its answer?
 
 ---
 
-## 4. RAG Architecture and Workflow
+## 4. How RAG Works (Workflows & Diagrams)
 
-The RAG system operates in two distinct phases: **Ingestion & Indexing** and **Query & Question Answering**.
+The system works in two separate steps:
+1. **Ingestion (Saving the PDF)**
+2. **Retrieval and Answering (Answering your question)**
 
-### Ingestion and Indexing Flow
+---
 
-When a user uploads a PDF, the document passes through validation, extraction, chunking, embedding, vector storage, and relational tracking:
+### Step 1: Ingestion & Indexing Workflow
+
+When you upload a PDF file, this is what happens behind the scenes:
 
 ```mermaid
 flowchart TD
-    A[User Uploads PDF] --> B[Validate File & Size]
-    B -->|Check Magic Bytes %PDF| C{Valid PDF?}
-    C -->|No| D[Reject with HTTP 400/413/422]
-    C -->|Yes| E[Compute SHA-256 Hash]
+    A[Upload PDF file] --> B[Check file format & size max 10MB]
+    B --> C{Is it a valid PDF?}
+    C -->|No| D[Return error message]
+    C -->|Yes| E[Calculate SHA-256 Hash]
     
-    E --> F{Hash Exists in SQLite?}
-    F -->|Yes| G[Duplicate Detected: Return Existing Record]
-    F -->|No| H{Filename Exists?}
+    E --> F{Was this exact file uploaded before?}
+    F -->|Yes| G[Duplicate: return existing chunks without re-indexing]
+    F -->|No| H{Does the filename already exist?}
     
-    H -->|Yes| I[Mark as Update: Backup Existing Vectors]
-    H -->|No| J[Extract Text Page-by-Page in Memory]
+    H -->|Yes| I[Update case: backup old chunks]
+    H -->|No| J[Extract text page-by-page in memory]
     I --> J
     
-    J --> K[Page-Aware Chunking: ~800 chars, ~150 overlap]
-    K --> L[Generate Deterministic Chunk IDs]
-    L --> M[FastEmbed: Generate 384-dim Dense Vectors]
+    J --> K[Split into chunks: ~800 characters each, 150 overlap]
+    K --> L[Assign stable ID to each chunk]
+    L --> M[FastEmbed: turn chunks into 384-number vectors]
     
-    M --> N{Is Update?}
-    N -->|Yes| O[Delete Old Chunks from ChromaDB]
-    N -->|No| P[Upsert Chunks to ChromaDB]
+    M --> N{Is this an update?}
+    N -->|Yes| O[Delete old chunks from ChromaDB]
+    N -->|No| P[Save new chunks into ChromaDB]
     O --> P
     
-    P -->|Success| Q[Commit Metadata to SQLite DB]
-    P -->|Failure| R[Rollback: Restore Backup Chunks & SQLite]
-    Q --> S[Return Indexing Summary to Client]
+    P -->|Success| Q[Save document info into SQLite database]
+    P -->|Failure| R[Restore previous backup so nothing breaks]
+    Q --> S[Show success message on screen]
 ```
 
-### Retrieval and Question Answering Flow
+---
 
-When a user submits a natural-language question, the system retrieves relevant chunks, applies hybrid reranking, constructs a grounded prompt, and streams the answer from Gemini:
+### Step 2: Retrieval & Question Answering Workflow
+
+When you type a question in the chat, this is what happens:
 
 ```mermaid
 flowchart TD
-    A1[User Submits Question] --> B1[FastEmbed: Embed Query into 384-dim Vector]
-    B1 --> C1[ChromaDB: Retrieve Candidate Chunks (top_k * 3)]
+    A1[You type a question] --> B1[FastEmbed: turn your question into a vector]
+    B1 --> C1[ChromaDB: find the closest chunks]
     
-    C1 --> D1[Hybrid Reranker: 65% Dense Similarity + 35% Lexical IDF Overlap]
-    D1 --> E1[Select Top-K Ranked Chunks]
+    C1 --> D1[Reranker: score chunks using both vectors & exact words]
+    D1 --> E1[Pick the top 4 best chunks]
     
-    E1 --> F1[Format Grounded Prompt with Citations & Context]
-    F1 --> G1[Google Gemini 2.5 Flash]
+    E1 --> F1[Build prompt with your question + document snippets]
+    F1 --> G1[Send prompt to Google Gemini 2.5 Flash]
     
-    G1 --> H1{API Error?}
-    H1 -->|429 Rate Limit / 503 Outage| I1{Retries < 3?}
-    I1 -->|Yes| J1[Exponential Backoff / Sleep Retry-After]
+    G1 --> H1{Any rate limit or server error?}
+    H1 -->|Yes| I1{Retried less than 3 times?}
+    I1 -->|Yes| J1[Wait a moment with backoff and retry]
     J1 --> G1
-    I1 -->|No| K1[Sanitize Error & Return HTTP 502/429]
+    I1 -->|No| K1[Show friendly error message]
     
-    H1 -->|Success| L1[Stream Tokens via Server-Sent Events]
-    L1 --> M1{Client Disconnected?}
-    M1 -->|Yes| N1[Abort Stream Cleanly]
-    M1 -->|No| O1[Persist Assistant Message with Citations in SQLite]
-    O1 --> P1[Render Message & Citations in UI]
+    H1 -->|No error| L1[Stream words live to your browser using SSE]
+    L1 --> M1{Did you close the tab?}
+    M1 -->|Yes| N1[Stop generation cleanly]
+    M1 -->|No| O1[Save final message and citations in SQLite]
+    O1 --> P1[Display full answer with page citations]
 ```
 
 ---
 
-## 5. Technology Stack
+## 5. Tech Stack
 
-All technology choices reflect the actual dependencies configured in `backend/requirements.txt` and `frontend/package.json`:
+Every technology listed here comes directly from the project's configuration files:
 
 ### Backend
-- **Framework**: [FastAPI](https://fastapi.tiangolo.com) (`>=0.115.0`) — Asynchronous REST API, dependency injection, and SSE streaming.
-- **ASGI Server**: [Uvicorn](https://www.uvicorn.org) (`>=0.30.0`) — Lightning-fast ASGI web server implementation.
-- **Data Validation & Settings**: [Pydantic v2](https://docs.pydantic.dev) (`>=2.9.0`) & [Pydantic-Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) (`>=2.4.0`).
-- **Database & ORM**: [SQLAlchemy](https://www.sqlalchemy.org) (`>=2.0.30`) with SQLite (`backend/data/chat.db`).
-- **PDF Extraction**: [PyPDF](https://pypdf.readthedocs.io) (`>=4.0.0`) — In-memory stream parsing and page extraction.
-- **Embeddings**: [FastEmbed](https://github.com/qdrant/fastembed) (`>=0.4.0`) — Local ONNX-based dense semantic embedding runtime.
-  - **Default Embedding Model**: `BAAI/bge-small-en-v1.5` (384 dimensions).
-- **Vector Database**: [ChromaDB](https://www.trychroma.com) (`>=0.5.0`) — Embedded persistent vector store with cosine distance index.
-- **LLM Provider**: [Google GenAI SDK](https://github.com/googleapis/python-genai) (`google-genai>=0.1.1`).
-  - **Default LLM**: `gemini-2.5-flash`.
-- **HTTP Client**: [HTTPX](https://www.python-httpx.org) (`>=0.27.0`) — Asynchronous HTTP testing and API calls.
-- **Testing**: [Pytest](https://docs.pytest.org) (`>=8.0.0`) and [pytest-asyncio](https://pytest-asyncio.readthedocs.io) (`>=0.23.0`).
+- **Language**: Python 3.10+
+- **Web Framework**: [FastAPI](https://fastapi.tiangolo.com) (version `>=0.115.0`)
+- **Web Server**: [Uvicorn](https://www.uvicorn.org) (version `>=0.30.0`)
+- **Data Validation**: [Pydantic v2](https://docs.pydantic.dev) (version `>=2.9.0`)
+- **Database & ORM**: [SQLAlchemy](https://www.sqlalchemy.org) (`>=2.0.30`) with an SQLite database (`chat.db`)
+- **PDF Extraction**: [PyPDF](https://pypdf.readthedocs.io) (version `>=4.0.0`)
+- **Embeddings**: [FastEmbed](https://github.com/qdrant/fastembed) (version `>=0.4.0`)
+  - **Default model**: `BAAI/bge-small-en-v1.5` (produces 384-dimensional vectors locally)
+- **Vector Store**: [ChromaDB](https://www.trychroma.com) (version `>=0.5.0`)
+- **AI Model Provider**: [Google GenAI SDK](https://github.com/googleapis/python-genai) (`google-genai>=0.1.1`)
+  - **Default model**: `gemini-2.5-flash`
+- **Testing**: [Pytest](https://docs.pytest.org) (`>=8.0.0`) and [HTTPX](https://www.python-httpx.org) (`>=0.27.0`)
 
 ### Frontend
-- **Framework**: [Next.js 16.4.2](https://nextjs.org) (App Router architecture).
-- **UI Library**: [React 19.3.0](https://react.dev) & React DOM 19.3.0.
-- **Styling**: [Tailwind CSS v4](https://tailwindcss.com) (`@tailwindcss/turbopack`).
-- **Language**: [TypeScript 5](https://www.typescriptlang.org).
-- **Linting**: [ESLint 9](https://eslint.org) with `eslint-config-next`.
+- **Framework**: [Next.js 16.4.2](https://nextjs.org) (using App Router)
+- **UI Library**: [React 19.3.0](https://react.dev)
+- **Styling**: [Tailwind CSS v4](https://tailwindcss.com)
+- **Language**: [TypeScript 5](https://www.typescriptlang.org)
+- **Communication**: Server-Sent Events (SSE) for word-by-word streaming
 
 ---
 
-## 6. Architecture and Project Structure
+## 6. Project Structure
 
-### Repository Directory Tree
+Here is a simplified map of the folders and files in the project:
 
 ```
 knowledge_assistant/
-├── README.md                           # Comprehensive project documentation
-├── AGENTS.md                           # Autonomous execution & agent rules
-├── .gitignore                          # Git ignore rules for Python & Node.js
+├── README.md                           # This guide
+├── AGENTS.md                           # Rules for automated agents
 │
-├── backend/
-│   ├── main.py                         # FastAPI application entrypoint & CORS config
-│   ├── requirements.txt                # Python backend dependencies
-│   ├── pytest.ini                      # Pytest configuration & async modes
-│   ├── .env                            # Local environment configuration (API keys)
+├── backend/                            # Python FastAPI Backend
+│   ├── main.py                         # Starts the server & registers routes
+│   ├── requirements.txt                # Python packages needed
+│   ├── .env                            # Your API keys and configuration
 │   │
 │   ├── app/
-│   │   ├── config.py                   # Pydantic BaseSettings (model, chunk size, store)
+│   │   ├── config.py                   # Settings (model names, chunk sizes)
 │   │   ├── db/
-│   │   │   ├── models.py               # SQLAlchemy models: UploadedDocument, Conversation, Message
-│   │   │   └── session.py              # SQLite engine, sessionmaker, and get_db dependency
+│   │   │   ├── models.py               # Database tables: Documents, Chats, Messages
+│   │   │   └── session.py              # SQLite database connection
 │   │   ├── providers/
-│   │   │   ├── base.py                 # Abstract AIProvider interface
-│   │   │   ├── gemini.py               # GeminiProvider with bounded exponential retries & sanitization
-│   │   │   └── embeddings/
-│   │   │       └── mock_provider.py    # Deterministic MockEmbeddingProvider for offline tests
+│   │   │   ├── gemini.py               # Gemini connection with retries & error safety
+│   │   │   └── embeddings/mock_provider.py # Fake embedding tool for offline tests
 │   │   ├── routes/
-│   │   │   ├── conversations.py        # Conversation CRUD, message history, & SSE streaming
-│   │   │   └── documents.py            # PDF upload, chunking, indexing, search, ask, deletion
-│   │   ├── schemas/
-│   │   │   ├── chat.py                 # Pydantic schemas for chat sessions and streaming events
-│   │   │   ├── document.py             # Schemas for PDF extraction, chunks, and metadata
-│   │   │   └── search.py               # Schemas for vector queries, top-k results, and RAG QA
+│   │   │   ├── documents.py            # Upload, index, search, and delete endpoints
+│   │   │   └── conversations.py        # Chat sessions and streaming endpoints
+│   │   ├── schemas/                    # Pydantic models for incoming & outgoing data
 │   │   ├── services/
-│   │   │   ├── ai_service.py           # Provider delegation for general LLM completions
-│   │   │   ├── chat_history_service.py # SQLite database persistence for messages and sessions
-│   │   │   ├── chunking_service.py     # Page-isolated chunking with natural boundary heuristics
-│   │   │   ├── embedding_service.py    # FastEmbed dense embedding generation and batching
-│   │   │   ├── pdf_service.py          # PyPDF byte inspection, header validation, and page parsing
-│   │   │   ├── rag_service.py          # Grounded prompt construction, citation rules, and QA logic
-│   │   │   └── search_service.py       # Vector indexing, hybrid dense-lexical reranking, atomic updates
+│   │   │   ├── pdf_service.py          # Extracts text from PDF bytes in memory
+│   │   │   ├── chunking_service.py     # Cuts pages into overlapping chunks
+│   │   │   ├── embedding_service.py    # Converts text to vectors with FastEmbed
+│   │   │   ├── search_service.py       # Vector search, reranking, and updates
+│   │   │   └── rag_service.py          # Builds prompts and manages answers
 │   │   └── vector_store/
-│   │       ├── base.py                 # Abstract BaseVectorStore interface
-│   │       ├── chroma_store.py         # ChromaDB persistent collection adapter
-│   │       ├── factory.py              # Singleton factory with Chroma -> Memory fallback
-│   │       └── memory_store.py         # In-memory vector store with optional JSON persistence
+│   │       ├── chroma_store.py         # ChromaDB vector store
+│   │       ├── memory_store.py         # Lightweight fallback in-memory store
+│   │       └── factory.py              # Picks ChromaDB or in-memory automatically
 │   │
 │   ├── data/
-│   │   ├── chat.db                     # SQLite database storing conversations and documents
-│   │   ├── chroma/                     # ChromaDB persistent vector storage directory
-│   │   ├── eval_dataset.json           # 20-question evaluation dataset with ground-truth facts
-│   │   ├── eval_results.json           # Output metrics and per-query diagnostics from evaluate_rag.py
-│   │   └── sample_documents/           # Test documents (e.g., generated company_handbook.pdf)
+│   │   ├── chat.db                     # SQLite database file
+│   │   ├── chroma/                     # ChromaDB vectors saved on disk
+│   │   ├── eval_dataset.json           # 20 test questions for benchmark evaluation
+│   │   └── sample_documents/           # Test PDF files
 │   │
 │   ├── scripts/
-│   │   ├── evaluate_rag.py             # Evaluation harness (Recall, MRR, Citations, Refusal, Facts)
-│   │   └── generate_sample_pdf.py      # Generates synthetic multi-page company handbook PDF
+│   │   ├── evaluate_rag.py             # Evaluation script for measuring accuracy
+│   │   └── generate_sample_pdf.py      # Makes a sample company handbook PDF
 │   │
-│   └── tests/
-│       ├── test_chunking.py            # Unit tests for chunk size, overlap, and page isolation
-│       ├── test_documents.py           # Tests for upload, duplicate detection, updates, and deletion
-│       ├── test_embeddings.py          # Tests for embedding generation and vector dimensionality
-│       ├── test_evaluation.py          # Tests for the RAG evaluation metrics and scoring math
-│       ├── test_rag.py                 # Tests for prompt formatting, citations, retries, and streaming
-│       └── test_vector_store.py        # Tests for ChromaDB and InMemoryVectorStore operations
+│   └── tests/                          # 6 automated test files
 │
-└── frontend/
-    ├── package.json                    # Next.js 16, React 19, Tailwind CSS dependencies
-    ├── tsconfig.json                   # TypeScript configuration
-    ├── next.config.ts                  # Next.js runtime configuration
-    ├── .env.local.example              # Example frontend environment variables
-    │
-    └── src/
-        ├── app/
-        │   ├── layout.tsx              # Root HTML layout and global styles
-        │   ├── page.tsx                # Home page (renders chat interface)
-        │   ├── documents/
-        │   │   └── page.tsx            # Documents page (upload zone and document list)
-        │   └── globals.css             # Tailwind CSS tokens and base styles
-        ├── components/
-        │   └── ui/                     # Reusable UI components (Button, Input, Badge, Dialog)
-        ├── features/
-        │   ├── chat/
-        │   │   ├── components/         # ChatInterface, ChatMessage, ChatInput, ChatSidebar
-        │   │   ├── hooks/              # useChatStream (SSE parser) and useConversations
-        │   │   └── types/              # Chat message and session TypeScript interfaces
-        │   └── documents/
-        │       ├── components/         # DocumentUploadPage, UploadZone, DocumentList
-        │       ├── hooks/              # useDocumentUpload and useDocumentManagement
-        │       ├── services/           # document-api client for FastAPI communication
-        │       └── types/              # Document and chunk TypeScript interfaces
-        └── lib/
-            └── utils.ts                # Tailwind clsx/twMerge utilities and date formatters
+└── frontend/                           # Next.js 16 Web Application
+    ├── package.json                    # Frontend dependencies
+    ├── src/
+    │   ├── app/
+    │   │   ├── page.tsx                # Main chat page
+    │   │   └── documents/page.tsx      # Document upload & management page
+    │   ├── features/
+    │   │   ├── chat/                   # Chat UI, message bubbles, streaming hook
+    │   │   └── documents/              # File upload zone & document list with delete
+    │   └── components/ui/              # Buttons, inputs, and small UI elements
 ```
 
 ---
 
-## 7. Prerequisites and Installation
+## 7. Setup & Installation
 
-### Prerequisites
-- **Python**: Version `3.10` or higher (verified with Python 3.10 - 3.12).
-- **Node.js**: Version `18.17` or higher (Node `20.x` LTS recommended).
-- **Package Managers**: `pip` (Python) and `npm` (Node.js).
-- **Google Gemini API Key**: Obtain a free API key from [Google AI Studio](https://aistudio.google.com/).
+### Requirements
+- **Python**: Version `3.10` or newer.
+- **Node.js**: Version `18.17` or newer (version `20.x` recommended).
+- **Google Gemini API Key**: Get a free API key from [Google AI Studio](https://aistudio.google.com/).
 
 ---
 
-### Step 1: Clone or Navigate to the Repository
+### Step 1: Open the Project Directory
 
-```bash
+```powershell
 cd F:\Python\knowledge_assistant
 ```
 
 ---
 
-### Step 2: Backend Setup
+### Step 2: Set Up the Backend
 
-1. **Create and activate a Python virtual environment** (Windows PowerShell / Command Prompt):
+1. Go to the `backend` folder and create a virtual environment:
 
-   *Windows PowerShell:*
+   *On Windows (PowerShell):*
    ```powershell
    cd backend
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
    ```
 
-   *Windows Command Prompt (cmd):*
+   *On Windows (Command Prompt):*
    ```cmd
    cd backend
    python -m venv .venv
    .\.venv\Scripts\activate.bat
    ```
 
-   *Linux / macOS:*
+   *On Linux / Mac:*
    ```bash
    cd backend
    python3 -m venv .venv
    source .venv/bin/activate
    ```
 
-2. **Install backend dependencies**:
-   ```bash
-   pip install --upgrade pip
+2. Install the required Python packages:
+   ```powershell
    pip install -r requirements.txt
    ```
 
-3. **Configure environment variables**:
-   Create a `.env` file in the `backend/` directory:
-
-   ```bash
-   # In backend/.env
+3. Create your `.env` configuration file in the `backend/` folder:
+   Create a file named `.env` inside `backend/` with these lines:
+   ```env
    AI_PROVIDER=gemini
-   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_API_KEY=your_actual_gemini_api_key_here
    GEMINI_MODEL=gemini-2.5-flash
    ```
 
-   *Configuration Options in `backend/app/config.py`:*
-   - `GEMINI_API_KEY`: Your Google GenAI API key.
-   - `GEMINI_MODEL`: Default model name (`gemini-2.5-flash` or `gemini-1.5-pro`).
-   - `CHUNK_SIZE`: Target characters per chunk (default: `800`).
-   - `CHUNK_OVERLAP`: Overlap characters between chunks on the same page (default: `150`).
-   - `EMBEDDING_PROVIDER`: `local` (uses FastEmbed) or `mock`.
-   - `EMBEDDING_MODEL`: Compact semantic embedding model (default: `BAAI/bge-small-en-v1.5`).
-   - `VECTOR_STORE_TYPE`: `chroma` (default) or `memory`.
-   - `CHROMA_PERSIST_DIRECTORY`: Path for vector persistence (default: `backend/data/chroma`).
-   - `SEARCH_TOP_K`: Default chunks retrieved per query (default: `4`).
-   - `MAX_UPLOAD_SIZE_BYTES`: Max PDF upload size (default: `10485760` = 10 MB).
-
 ---
 
-### Step 3: Frontend Setup
+### Step 3: Set Up the Frontend
 
-1. Open a new terminal window and navigate to `frontend`:
-   ```bash
+1. Open a **second terminal window** and navigate to the `frontend` folder:
+   ```powershell
    cd F:\Python\knowledge_assistant\frontend
    ```
 
-2. **Install Node.js dependencies**:
-   ```bash
+2. Install dependencies:
+   ```powershell
    npm install
    ```
 
-3. **Configure frontend environment variables**:
-   Create a `.env.local` file based on `.env.local.example`:
-   ```bash
-   # In frontend/.env.local
+3. Create your `.env.local` configuration file:
+   Make a file named `.env.local` inside `frontend/` with this line:
+   ```env
    NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
    ```
 
 ---
 
-### Step 4: Running the Application
+### Step 4: Run the Application
 
-1. **Start the FastAPI Backend** (from `backend/` with virtual environment active):
-   ```bash
+1. **Start the Backend** (in your backend terminal with the virtual environment activated):
+   ```powershell
    uvicorn main:app --reload --host 127.0.0.1 --port 8000
    ```
-   *The backend will be available at:* `http://127.0.0.1:8000` (API documentation at `/docs`).
+   The backend API is now running at `http://127.0.0.1:8000`. You can view the automatic Swagger API documentation at `http://127.0.0.1:8000/docs`.
 
-2. **Start the Next.js Frontend** (from `frontend/`):
-   ```bash
+2. **Start the Frontend** (in your frontend terminal):
+   ```powershell
    npm run dev
    ```
-   *The web UI will be available at:* `http://localhost:3000`.
+   Open your browser and visit: **`http://localhost:3000`**.
 
 ---
 
-## 8. How to Use
+## 8. How to Use the App
 
-### 1. Uploading Documents
-1. Navigate to `http://localhost:3000/documents` using your browser.
-2. Drag and drop any standard PDF document (up to 10 MB) into the upload zone, or click to browse.
-3. The system will process the file in memory:
-   - Verifies PDF magic bytes (`%PDF`).
-   - Computes a SHA-256 content hash.
-   - Extracts text page-by-page.
-   - Splits text into page-isolated chunks.
-   - Computes 384-dimensional dense vectors using FastEmbed.
-   - Stores the vectors in ChromaDB and records metadata in SQLite.
-4. The extraction summary will display the detected page count, character count, chunk count, and indexing status.
+### 1. Upload a PDF
+1. Go to `http://localhost:3000/documents`.
+2. Drag and drop your PDF into the upload box (or click to browse).
+3. The app will inspect the file, extract the text, create chunks, embed them with FastEmbed, and save them in ChromaDB.
+4. When finished, you will see the total number of pages and chunks that were indexed.
 
-### 2. Handling Duplicate and Updated Documents
-- **Duplicate Upload**: If you re-upload an identical document with the same content hash, the system displays an alert indicating that identical content is already indexed, skipping redundant embedding and indexing.
-- **Updated Document**: If you upload a modified PDF with the **same filename**, the system embeds the new chunks, atomically removes the old chunks from ChromaDB, and inserts the new version. If any error occurs, the previous version is automatically restored.
+### 2. What Happens if You Upload the Same File Again?
+- **Identical content**: If you upload the exact same file twice, the app checks the SHA-256 hash, skips the duplicate work, and tells you it is already indexed.
+- **Updated version**: If you edit the PDF and upload it with the same filename, the app replaces the old chunks with the new ones so you never get outdated search results.
 
-### 3. Asking Grounded Questions
-1. Return to the Chat interface at `http://localhost:3000`.
-2. Ensure the **RAG toggle** is enabled (or use the default RAG mode).
-3. Type a question related to your uploaded documents (e.g., *"What is the policy for parental leave?"* or *"When was the company founded?"*).
-4. The assistant streams the answer in real time using Server-Sent Events.
+### 3. Ask Questions
+1. Go back to the main chat page at `http://localhost:3000`.
+2. Ask any question about your PDF (e.g., *"What are the office hours?"* or *"What is the policy for sick days?"*).
+3. The assistant will search the document, find the matching pages, and stream an answer directly to your screen.
 
-### 4. Understanding Citations
-Every grounded answer references its source passages:
-- In-text citations appear as `[Source: company_handbook.pdf, Page 4]`.
-- If a question cannot be answered from the uploaded material, the assistant explicitly replies:
-  > *"The uploaded documents do not provide enough information to answer this question."*
+### 4. Read Citations
+Every grounded answer includes citations like:
+> `[Source: company_handbook.pdf, Page 4]`
 
-### 5. Managing Documents
-1. Visit `http://localhost:3000/documents` and scroll down to the **Knowledge Base Documents** section.
-2. View all indexed files along with their page count, chunk count, and upload timestamp.
-3. To delete a document, click **Delete**, confirm the prompt, and the document is removed simultaneously from SQLite and ChromaDB. Subsequent questions will no longer retrieve chunks from that document.
+If your question is about something not mentioned in the PDF, the assistant will tell you clearly:
+> *"The uploaded documents do not provide enough information to answer this question."*
+
+### 5. Delete Documents
+1. On the `http://localhost:3000/documents` page, look at the **Knowledge Base Documents** list at the bottom.
+2. Click the **Delete** button next to any file.
+3. Confirm the prompt. The file's records are deleted from both SQLite and ChromaDB immediately. Future questions will no longer use content from that file.
 
 ---
 
-## 9. API Overview
+## 9. API Reference
 
-The FastAPI backend exposes interactive OpenAPI documentation at `http://127.0.0.1:8000/docs`.
+You can test every endpoint directly using the interactive Swagger docs at `http://127.0.0.1:8000/docs`.
 
 ### Document Endpoints (`/api/documents`)
 
-| Method | Endpoint | Description |
+| Method | URL | What It Does |
 | :--- | :--- | :--- |
-| `POST` | `/api/documents/upload` | Uploads a PDF, extracts text, chunks it, generates embeddings, and indexes chunks (default: `index=True`). Detects duplicates via SHA-256. |
-| `POST` | `/api/documents/index` | Dedicated indexing endpoint: extracts, embeds, and stores chunks into ChromaDB. |
-| `POST` | `/api/documents/index-chunks` | Directly indexes an existing array of `DocumentChunk` objects into the vector store. |
-| `POST` | `/api/documents/chunk-preview` | Previews chunking behavior for arbitrary text without uploading a file. |
-| `POST` | `/api/documents/embed-preview` | Generates a single embedding for arbitrary text to inspect model name and dimensionality. |
-| `POST` | `/api/documents/embed-chunks` | Batch generates embeddings for a list of `DocumentChunk` objects. |
-| `POST` | `/api/documents/search` | Performs hybrid semantic search (dense + lexical) for a query string. |
-| `GET` | `/api/documents/search` | Browser-friendly GET endpoint for semantic search (`?q=query&top_k=4`). |
-| `POST` | `/api/documents/ask` | Non-streaming RAG QA: retrieves chunks, prompts Gemini, returns answer and source chunks. |
-| `GET` | `/api/documents` | Lists all uploaded documents recorded in the SQLite database with indexing stats. |
-| `GET` | `/api/documents/{id}` | Retrieves metadata for a single document by its UUID. |
-| `DELETE` | `/api/documents/{id}` | Atomically deletes a document from SQLite and removes its chunks from ChromaDB. |
-| `GET` | `/api/documents/collection-stats` | Returns vector store statistics (total indexed chunks, active store backend). |
-| `DELETE` | `/api/documents/collection` | Clears all vectors from ChromaDB and wipes document tracking records. |
+| `POST` | `/api/documents/upload` | Uploads a PDF, chunks it, generates embeddings, and saves it in ChromaDB. |
+| `POST` | `/api/documents/index` | Direct indexing endpoint for a PDF file. |
+| `POST` | `/api/documents/search` | Performs a semantic search for a query and returns top matching chunks. |
+| `GET` | `/api/documents/search` | Browser-friendly search using query parameters (`?q=your_query&top_k=4`). |
+| `POST` | `/api/documents/ask` | Non-streaming question-answering endpoint. Returns the answer and sources. |
+| `GET` | `/api/documents` | Returns a list of all uploaded documents with page and chunk counts. |
+| `GET` | `/api/documents/{id}` | Gets details for a single document by its ID. |
+| `DELETE` | `/api/documents/{id}` | Deletes a document from both SQLite and ChromaDB. |
+| `GET` | `/api/documents/collection-stats` | Shows how many chunks are currently saved in the vector database. |
+| `DELETE` | `/api/documents/collection` | Clears all chunks from the vector database. |
 
-### Conversation & Chat Endpoints (`/api/conversations`)
+### Chat Endpoints (`/api/conversations`)
 
-| Method | Endpoint | Description |
+| Method | URL | What It Does |
 | :--- | :--- | :--- |
-| `POST` | `/api/conversations` | Creates a new conversation session. |
-| `GET` | `/api/conversations` | Lists all conversations ordered by recent activity. |
-| `GET` | `/api/conversations/{id}` | Gets conversation metadata. |
-| `PATCH` | `/api/conversations/{id}` | Renames a conversation title. |
-| `DELETE` | `/api/conversations/{id}` | Deletes a conversation and all its messages. |
-| `GET` | `/api/conversations/{id}/messages` | Retrieves chronological message history for a conversation. |
-| `POST` | `/api/conversations/{id}/messages` | Non-streaming message endpoint (supports `?use_rag=true`). |
-| `POST` | `/api/conversations/{id}/messages/stream` | **Streaming endpoint**: Progressively yields tokens via Server-Sent Events (SSE). |
+| `POST` | `/api/conversations` | Starts a new chat conversation. |
+| `GET` | `/api/conversations` | Lists all previous conversations. |
+| `GET` | `/api/conversations/{id}/messages` | Gets all messages in a conversation. |
+| `POST` | `/api/conversations/{id}/messages` | Sends a message and receives a full reply. |
+| `POST` | `/api/conversations/{id}/messages/stream` | **Streaming endpoint**: Streams the AI reply word-by-word using SSE. |
 
 ---
 
-### Request & Response Examples
+### Example Requests & Responses
 
-#### 1. Upload & Index a PDF
-```http
-POST /api/documents/upload?index=true HTTP/1.1
-Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
-
-------WebKitFormBoundary
-Content-Disposition: form-data; name="file"; filename="handbook.pdf"
-Content-Type: application/pdf
-
-<PDF binary bytes>
-------WebKitFormBoundary--
-```
-
-*Response (`200 OK`):*
-```json
-{
-  "id": "e8a93144-8cb3-490f-90e9-b5f7e7591c2a",
-  "filename": "handbook.pdf",
-  "total_pages": 5,
-  "total_characters": 8420,
-  "has_extractable_text": true,
-  "total_chunks": 14,
-  "indexed_chunks": 14,
-  "is_duplicate": false,
-  "is_updated": false,
-  "content_hash": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
-  "message": "Successfully extracted text from 5 page(s) (8420 characters, 14 chunks) and indexed 14 chunk(s) into the knowledge base."
-}
-```
-
-#### 2. Semantic Search
+#### 1. Search Your Documents
 ```http
 POST /api/documents/search HTTP/1.1
 Content-Type: application/json
 
 {
   "query": "core collaboration hours",
-  "top_k": 2
+  "top_k": 1
 }
 ```
 
@@ -601,12 +502,12 @@ Content-Type: application/json
 ```json
 {
   "query": "core collaboration hours",
-  "total_results": 2,
+  "total_results": 1,
   "model": "BAAI/bge-small-en-v1.5",
   "results": [
     {
       "chunk_id": "handbook_pdf_p2_c1",
-      "text": "Core collaboration hours are 10:00 AM to 3:00 PM PST. All team members are expected to be available on Slack and Zoom during these hours.",
+      "text": "Core collaboration hours are 10:00 AM to 3:00 PM PST. All employees must be reachable on Slack during this time.",
       "filename": "handbook.pdf",
       "page_number": 2,
       "chunk_index": 1,
@@ -617,13 +518,13 @@ Content-Type: application/json
 }
 ```
 
-#### 3. Ask Question (RAG Endpoint)
+#### 2. Ask a Question via API
 ```http
 POST /api/documents/ask HTTP/1.1
 Content-Type: application/json
 
 {
-  "question": "What are the core collaboration hours?",
+  "question": "What are the core hours?",
   "top_k": 3
 }
 ```
@@ -631,17 +532,15 @@ Content-Type: application/json
 *Response (`200 OK`):*
 ```json
 {
-  "question": "What are the core collaboration hours?",
-  "answer": "Core collaboration hours are 10:00 AM to 3:00 PM PST [Source: handbook.pdf, Page 2]. Team members are expected to be available for meetings and communications during this window.",
+  "question": "What are the core hours?",
+  "answer": "Core collaboration hours are 10:00 AM to 3:00 PM PST [Source: handbook.pdf, Page 2].",
   "sources": [
     {
       "chunk_id": "handbook_pdf_p2_c1",
       "text": "Core collaboration hours are 10:00 AM to 3:00 PM PST...",
       "filename": "handbook.pdf",
       "page_number": 2,
-      "chunk_index": 1,
-      "similarity_score": 0.8421,
-      "distance": 0.1579
+      "similarity_score": 0.8421
     }
   ]
 }
@@ -649,123 +548,103 @@ Content-Type: application/json
 
 ---
 
-## 10. Evaluation and Testing
+## 10. Testing & Evaluation
 
-### The Evaluation Dataset
-The repository includes a curated evaluation dataset at `backend/data/eval_dataset.json` comprising 20 challenging questions paired with a multi-page synthetic company handbook (`company_handbook.pdf`):
-- **Direct Single-Page Questions (10)**: Factual questions targeting a specific detail on a single page (e.g. founding year, 401(k) match, stipend amount).
-- **Multi-Section Questions (5)**: Inquiries that span multiple policies or comparative clauses across different pages (e.g. sick leave vs. vacation rollover).
-- **Unanswerable Questions (5)**: Queries regarding topics not covered in the handbook (e.g. pet insurance, cafeteria menus, executive compensation) designed to test hallucination resistance.
-
-### Evaluation Metrics Defined
-The evaluation harness (`backend/scripts/evaluate_rag.py`) computes five quantitative metrics:
-
-1. **Recall@K (%)**: The percentage of answerable questions for which at least one ground-truth page was successfully retrieved within the top-K chunks.
-2. **Mean Reciprocal Rank (MRR)**: Evaluates ranking position quality ($1 / \text{rank}$ of the first relevant chunk). Chunks appearing at rank #1 receive 1.0; rank #2 receives 0.5.
-3. **Citation Correctness (%)**: The percentage of answers containing valid citations where all cited page numbers match the actual ground-truth pages.
-4. **Refusal Accuracy (%)**: The accuracy with which the system correctly detects unanswerable questions, clearly stating that the documents do not provide enough information without hallucinating facts or page citations.
-5. **Fact Coverage (%)**: A normalized lexical verification algorithm that checks whether key constituent facts, percentages, currency values, and clauses from the ground-truth checklist appear in the generated answer.
+### The Test Dataset
+The project includes a benchmark dataset at `backend/data/eval_dataset.json` with 20 questions tested against a sample employee handbook:
+1. **Direct Questions (10)**: Questions answered on a single page (e.g. *"What is the 401(k) match?"*).
+2. **Multi-Section Questions (5)**: Questions comparing rules across different pages (e.g. vacation days vs. sick leave).
+3. **Unanswerable Questions (5)**: Questions about things not in the handbook (e.g. pet insurance or cafeteria menu) to test if the model resists hallucinating.
 
 ---
 
-### Running the Tests and Evaluation Suite
+### Evaluation Metrics Explained Simply
 
-#### 1. Backend Pytest Suite (Mocked & Fast)
-Runs 6 test suites verifying chunking, uploads, vector store, retries, and evaluation logic without calling live external APIs:
+- **Recall@K**: Did the search find the correct page in the top K chunks? (Yes or No).
+- **MRR (Mean Reciprocal Rank)**: How high on the list was the right page? If it's rank #1, score is 1.0. If rank #2, score is 0.5.
+- **Citation Correctness**: Did the AI cite the real, correct page number?
+- **Refusal Accuracy**: When asked an unanswerable question, did the AI say "I don't know" instead of inventing an answer?
+- **Fact Coverage**: Did the AI mention all the essential numbers and facts from the answer checklist?
+
+---
+
+### How to Run Tests
+
+#### 1. Run the Fast Unit Test Suite
+Runs all 6 unit tests offline without calling the Gemini API:
 
 ```powershell
-cd backend
+cd F:\Python\knowledge_assistant\backend
+.\.venv\Scripts\Activate.ps1
 python -m pytest tests/ -v
 ```
 
-To run a specific test suite:
-```powershell
-python -m pytest tests/test_rag.py -v
-python -m pytest tests/test_documents.py -v
-```
-
-#### 2. Deterministic Offline RAG Evaluation
-Evaluates the retrieval pipeline, ranking, and scoring logic using a deterministic mock LLM (requires no Gemini API key):
+#### 2. Run the Offline Evaluation (Free, No API Key Needed)
+Uses a deterministic mock LLM to test retrieval and metrics quickly:
 
 ```powershell
-cd backend
+cd F:\Python\knowledge_assistant\backend
+.\.venv\Scripts\Activate.ps1
 python scripts/evaluate_rag.py --top-k 4 --diagnostics
 ```
 
-#### 3. Real-Pipeline Live Gemini Evaluation
-Evaluates the real end-to-end pipeline using live **Google Gemini 2.5 Flash**, persistent **ChromaDB**, and local **FastEmbed** embeddings (requires a valid `GEMINI_API_KEY` in `backend/.env`):
+#### 3. Run the Live Pipeline Evaluation (Uses Real Gemini)
+Tests the full system using live Gemini 2.5 Flash, ChromaDB, and FastEmbed:
 
 ```powershell
-cd backend
-python scripts/evaluate_rag.py --real-pipeline --top-k 4
-```
-
-*Subset Filtering Options for Low Quotas:*
-```powershell
-# Evaluate only a 3-question sample
+cd F:\Python\knowledge_assistant\backend
+.\.venv\Scripts\Activate.ps1
 python scripts/evaluate_rag.py --real-pipeline --limit 3
-
-# Evaluate only unanswerable questions to test refusal accuracy
-python scripts/evaluate_rag.py --real-pipeline --category unanswerable
-
-# Evaluate specific question IDs
-python scripts/evaluate_rag.py --real-pipeline --question-ids q01,q05,q16
 ```
 
-> **Note on Evaluation Results**: Unit tests run against deterministic offline mocks to guarantee repeatable CI/CD test passes. Live evaluation scores depend on your active Gemini API quota and network connectivity. Results are written directly to `backend/data/eval_results.json`.
+> **Note**: The unit tests use offline mocks so they pass reliably every time. The live evaluation calls the real Google Gemini API, so results depend on your API quota and network connection.
 
 ---
 
 ## 11. Known Limitations
 
-1. **Hosted Model Rate Limits (HTTP 429)**: The Google Gemini free-tier imposes limits on Requests Per Minute (RPM) and Tokens Per Minute (TPM). While the system retries with exponential backoff, running large batch evaluations without delays may exhaust your quota.
-2. **Text-Only PDF Extraction**: Text extraction relies on PyPDF. Scanned PDFs containing raster images without an embedded text layer will produce zero extractable characters. Optical Character Recognition (OCR) is not currently implemented.
-3. **Single-Node Storage**: SQLite and local ChromaDB operate as embedded single-process files on local storage. They are not designed for distributed, multi-instance horizontal scaling.
-4. **Context Window vs. Cost Trade-off**: Increasing `SEARCH_TOP_K` provides more context to the LLM but increases token consumption, latency, and potential attention dilution.
-5. **Complex Table Parsing**: PyPDF extracts text in reading-stream order. Tables with complex multi-column structures or nested cells may experience column interleaving.
+1. **Free Gemini Rate Limits**: Google's free-tier API has limits on requests per minute. If you send too many questions too fast, you might hit a 429 error. The app retries automatically, but very fast repetitive questions can temporarily exceed your quota.
+2. **Scanned PDFs**: The app extracts digital text using PyPDF. If you upload a scanned image of a page (a photocopy with no selectable text), it cannot extract text because Optical Character Recognition (OCR) is not yet included.
+3. **Single Computer Storage**: SQLite and ChromaDB store files locally on your computer. They are not set up for large multi-server cloud clusters.
+4. **Complex Tables**: While normal tables work fine, complex spreadsheets with nested rows may have their text extracted in reading order rather than table cells.
 
 ---
 
-## 12. Security Considerations
+## 12. Security & Safety
 
-### Implemented Protections
-- **API Key Scrubbing**: API keys are loaded via environment variables (`.env`) and never exposed to the frontend. The `sanitize_log_message` utility strips Google AI Studio keys (`AIza...`) from application logs using regex patterns.
-- **In-Memory File Validation**: Uploaded PDF bytes are inspected in memory. The system verifies `%PDF` magic bytes and rejects unauthorized extensions before processing.
-- **Upload Size Bounds**: Uploads exceeding `MAX_UPLOAD_SIZE_BYTES` (10 MB default) are rejected with HTTP 413 before consuming memory.
-- **Path Traversal Sanitization**: User-supplied filenames are sanitized using `os.path.basename` and stripped of illegal characters to prevent directory traversal attacks.
-- **Sanitized Error Responses**: Internal tracebacks, database queries, and raw external exception messages are caught and converted into user-friendly domain errors (HTTP 400, 404, 429, 502, 503).
-- **Client Disconnect Handling**: Streaming generators verify `await request.is_disconnected()` between tokens, avoiding orphaned generation tasks when users close their browser.
+### Protections Already Built In
+- **API Key Protection**: Your Gemini API key stays inside `backend/.env`. It is never sent to the browser, and any accidental keys in error logs are automatically redacted.
+- **File Validation**: The backend checks PDF magic bytes (`%PDF`) and rejects files over 10 MB before they use up memory.
+- **Path Protection**: Uploaded filenames are stripped of dangerous characters to prevent directory traversal attacks.
+- **Clean Errors**: If something crashes, the server sends back simple error messages instead of leaking private server paths or raw stack traces.
+- **Safe Disconnects**: If a user closes the browser during a response stream, the backend cancels the task cleanly.
 
-### Recommended Future Work for Production
-- **User Authentication & Authorization**: Add JWT or OAuth2 authentication to isolate document collections between different users or tenants.
-- **Prompt Injection Defense**: Incorporate a dedicated prompt guard model or heuristic checker (e.g., Llama Guard or NeMo Guardrails) to detect adversarial attempts to bypass grounding rules.
-- **Antivirus Scanning**: Integrate ClamAV scanning for uploaded binary files in high-security environments.
-- **Distributed Rate Limiting**: Implement Redis-backed token bucket rate limiters to protect public API routes from denial-of-service attempts.
+### Suggested Improvements for Production
+- Add user login (JWT/OAuth) so different users have private document folders.
+- Add an antivirus scanner for uploaded files.
+- Add an extra prompt-guard filter to catch adversarial prompt-injection attempts.
 
 ---
 
 ## 13. Future Improvements
 
-- **OCR Integration**: Integrate Tesseract OCR or AWS Textract to enable text extraction from scanned and photographed PDF documents.
-- **Advanced Chunking Strategies**: Implement semantic chunking based on embedding similarity drops or layout-aware markdown chunking.
-- **Cross-Encoder Reranking**: Deploy a neural cross-encoder model (such as `bge-reranker-large`) after initial bi-encoder retrieval to boost Precision@1.
-- **Multi-Modal Document QA**: Ingest document images, charts, and diagrams using Gemini's native multimodal vision capabilities.
-- **Multi-Tenant Distributed Vector Stores**: Support external enterprise vector databases such as Qdrant, Milvus, or pgvector.
-- **Query Rewriting & HyDE**: Implement Hypothetical Document Embeddings (HyDE) and query expansion to improve recall on vague questions.
+- **OCR Support**: Add Tesseract OCR to read scanned PDF documents and photos.
+- **Multi-Modal Support**: Let the AI read diagrams and charts directly using Gemini's vision features.
+- **Reranker Models**: Add a cross-encoder model (like `bge-reranker-large`) for even higher search accuracy.
+- **Cloud Vector Databases**: Add support for Qdrant, Milvus, or PostgreSQL with pgvector for larger cloud deployments.
+- **Query Rewriting**: Automatically improve vague user questions before running the search.
 
 ---
 
-## 14. Learning Outcomes
+## 14. What This Project Demonstrates
 
-This project demonstrates practical competence in foundational and advanced AI engineering disciplines:
-
-1. **RAG Architecture & Pipeline Design**: Designing a complete retrieval-augmented generation lifecycle from raw binary ingestion to token streaming.
-2. **Vector Space Fundamentals**: Understanding embedding spaces, dimensionality, cosine distance calculations, and candidate retrieval.
-3. **Chunking Trade-Offs**: Balancing chunk size, overlap ratios, and boundary constraints against LLM context limitations.
-4. **Hybrid Search Engineering**: Blending dense bi-encoder embeddings with sparse lexical inverse-document-frequency scoring.
-5. **System Resilience**: Implementing robust failure recovery, bounded exponential backoff, and clean error sanitization against third-party AI APIs.
-6. **Empirical AI Evaluation**: Establishing quantitative evaluation harnesses with objective metrics (Recall@K, MRR, Refusal Accuracy, Fact Coverage) to measure system performance scientifically.
-7. **Modern Full-Stack Integration**: Pairing an asynchronous Python FastAPI service with a Next.js 16 (React 19) user interface via Server-Sent Events.
+This project shows practical hands-on experience in modern AI software engineering:
+1. Building a full RAG system from scratch using Python and TypeScript.
+2. Understanding vector embeddings, chunking strategies, and cosine similarity.
+3. Combining vector search with keyword matching (hybrid reranking).
+4. Writing solid error handling with exponential backoff for external AI APIs.
+5. Measuring AI performance with real evaluation metrics (Recall, MRR, Refusal).
+6. Building modern full-stack web apps with FastAPI, Next.js 16, and Server-Sent Events.
 
 ---
 
